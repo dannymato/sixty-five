@@ -38,5 +38,7 @@ pub enum Opcode {
     BranchMinus(Byte) = 0x30,
     BranchNotEqual(Byte) = 0xd0,
     BranchPositive(Byte) = 0x10,
+    BitTestZero(Byte) = 0x24,
+    BitTestAbs(Word) = 0x2c,
     Break = 0x00,
 }

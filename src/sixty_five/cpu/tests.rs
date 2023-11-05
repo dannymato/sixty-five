@@ -2,11 +2,21 @@ use std::collections::HashMap;
 
 use crate::sixty_five::{
     data_types::{Byte, Word},
-    memory_bus::{MemoryBus, MemoryBusBuilder, OnBus, self},
+    memory_bus::{MemoryBus, MemoryBusBuilder, OnBus, mmio_range::MemRange},
 };
 
-use super::Cpu;
+use super::{Cpu, ClockHandler};
 
+#[derive(Default)]
+struct ClockWatcher {
+    pub clocks: u32,
+}
+
+impl ClockHandler for ClockWatcher {
+    fn handle_clock(&mut self, clocks: u32) {
+        self.clocks += clocks;
+    }
+}
 macro_rules! test_clock_cycle {
     ($test_name:ident, $opcode:literal, $clock_count:literal, $memory_block:tt) => {
         #[test]
@@ -14,22 +24,16 @@ macro_rules! test_clock_cycle {
             let mut memory_mock = MemoryMock::new();
             memory_mock.add_byte(0x0000, $opcode);
             $memory_block
-            let mut clock_count = 0;
-
             let mut memory_bus = build_memory_bus(&mut memory_mock);
+            let mut clock = ClockWatcher::default();
+            let mut cpu = Cpu::new();
+            cpu.init();
 
-            {
-                let mut cpu = Cpu::new();
-                cpu.init();
+            cpu.register_clock_handler(&mut clock);
 
-                cpu.register_clock_handler(Box::new(|clocks| {
-                    clock_count += clocks;
-                }));
+            cpu.start(&mut memory_bus);
 
-                cpu.start(&mut memory_bus);
-            }
-
-            assert_eq!(clock_count, $clock_count);
+            assert_eq!(clock.clocks, $clock_count);
         }
     };
     ($test_name:ident, $opcode:literal, $clock_count:literal) => {
@@ -462,22 +466,17 @@ fn jump_clock_cycle() {
     let mut memory_mock = MemoryMock::new();
     memory_mock.add_byte(0x0000, 0x4c);
     memory_mock.add_byte(0x0001, 0x14);
-    let mut clock_count = 0;
 
     let mut memory_bus = build_memory_bus(&mut memory_mock);
+    let mut clock = ClockWatcher::default();
+    let mut cpu = Cpu::new();
+    cpu.init();
 
-    {
-        let mut cpu = Cpu::new();
-        cpu.init();
+    cpu.register_clock_handler(&mut clock);
 
-        cpu.register_clock_handler(Box::new(|clocks| {
-            clock_count += clocks;
-        }));
+    cpu.start(&mut memory_bus);
 
-        cpu.start(&mut memory_bus);
-    }
-
-    assert_eq!(clock_count, 3);
+    assert_eq!(clock.clocks, 3);
 }
 
 #[test]
@@ -516,23 +515,18 @@ fn branch_carry_clear_no_branch_clock() {
     memory_mock.add_byte(0x0000, 0x90);
     memory_mock.add_byte(0x0001, 0x14);
     let mut memory_bus = build_memory_bus(&mut memory_mock);
+    let mut clocks = ClockWatcher::default();
 
-    let mut clock_count = 0;
+    let mut cpu = Cpu::new();
+    cpu.init();
 
-    {
-        let mut cpu = Cpu::new();
-        cpu.init();
+    cpu.carry = true;
 
-        cpu.carry = true;
+    cpu.register_clock_handler(&mut clocks);
 
-        cpu.register_clock_handler(Box::new(|clocks| {
-            clock_count += clocks;
-        }));
+    cpu.start(&mut memory_bus);
 
-        cpu.start(&mut memory_bus);
-    }
-
-    assert_eq!(clock_count, 2);
+    assert_eq!(clocks.clocks, 2);
 }
 
 #[test]
@@ -542,22 +536,17 @@ fn branch_carry_clear_branch_clock() {
     memory_mock.add_byte(0x0001, 0x14);
     let mut memory_bus = build_memory_bus(&mut memory_mock);
 
-    let mut clock_count = 0;
+    let mut clock = ClockWatcher::default();
 
-    {
-        let mut cpu = Cpu::new();
-        cpu.init();
+    let mut cpu = Cpu::new();
+    cpu.init();
 
-        cpu.carry = false;
+    cpu.carry = false;
 
-        cpu.register_clock_handler(Box::new(|clocks| {
-            clock_count += clocks;
-        }));
+    cpu.register_clock_handler(&mut clock);
+    cpu.start(&mut memory_bus);
 
-        cpu.start(&mut memory_bus);
-    }
-
-    assert_eq!(clock_count, 3);
+    assert_eq!(clock.clocks, 3);
 }
 
 #[test]
@@ -566,23 +555,17 @@ fn branch_carry_clear_branch_crossed_page_clock() {
     memory_mock.add_byte(0x0000, 0x90);
     memory_mock.add_byte(0x0001, 0xff);
     let mut memory_bus = build_memory_bus(&mut memory_mock);
+    let mut clock = ClockWatcher::default();
 
-    let mut clock_count = 0;
+    let mut cpu = Cpu::new();
+    cpu.init();
 
-    {
-        let mut cpu = Cpu::new();
-        cpu.init();
+    cpu.carry = false;
 
-        cpu.carry = false;
+    cpu.register_clock_handler(&mut clock);
+    cpu.start(&mut memory_bus);
 
-        cpu.register_clock_handler(Box::new(|clocks| {
-            clock_count += clocks;
-        }));
-
-        cpu.start(&mut memory_bus);
-    }
-
-    assert_eq!(clock_count, 5);
+    assert_eq!(clock.clocks, 5);
 }
 
 test_clock_cycle!(branch_carry_clear_branch_same_page_clock, 0x90, 3);
@@ -616,8 +599,264 @@ fn branch_carry_set_no_follow() {
 
     cpu.carry = false;
     cpu.start(&mut memory_bus);
-    assert_eq!(cpu.pc, 3);
+    assert_eq!(cpu.pc, 0x03);
 }
+
+#[test]
+fn branch_minus_follow() {
+    let mut memory_mock = MemoryMock::new();
+    memory_mock.add_byte(0x0000, 0x30);
+    memory_mock.add_byte(0x0001, 0x14);
+    let mut memory_bus = build_memory_bus(&mut memory_mock);
+
+    let mut cpu = Cpu::new();
+    cpu.init();
+
+    cpu.negative = true;
+    cpu.start(&mut memory_bus);
+    assert_eq!(cpu.pc, 0x14 + 3);
+}
+
+#[test]
+fn branch_minus_no_follow() {
+    let mut memory_mock = MemoryMock::new();
+    memory_mock.add_byte(0x0000, 0x30);
+    memory_mock.add_byte(0x0001, 0x14);
+    let mut memory_bus = build_memory_bus(&mut memory_mock);
+
+    let mut cpu = Cpu::new();
+    cpu.init();
+
+    cpu.negative = false;
+    cpu.start(&mut memory_bus);
+    assert_eq!(cpu.pc, 0x03);
+}
+
+#[test]
+fn branch_positive_follow() {
+    let mut memory_mock = MemoryMock::new();
+    memory_mock.add_byte(0x0000, 0x10);
+    memory_mock.add_byte(0x0001, 0x14);
+    let mut memory_bus = build_memory_bus(&mut memory_mock);
+
+    let mut cpu = Cpu::new();
+    cpu.init();
+    cpu.negative = false;
+    cpu.start(&mut memory_bus);
+    assert_eq!(cpu.pc, 0x14 + 3);
+}
+
+#[test]
+fn branch_positive_no_follow() {
+    let mut memory_mock = MemoryMock::new();
+    memory_mock.add_byte(0x0000, 0x10);
+    memory_mock.add_byte(0x0001, 0x14);
+    let mut memory_bus = build_memory_bus(&mut memory_mock);
+
+    let mut cpu = Cpu::new();
+    cpu.init();
+    cpu.negative = true;
+    cpu.start(&mut memory_bus);
+    assert_eq!(cpu.pc, 0x03);
+}
+
+#[test]
+fn branch_equal_follow() {
+    let mut memory_mock = MemoryMock::new();
+    memory_mock.add_byte(0x0000, 0xf0);
+    memory_mock.add_byte(0x0001, 0x14);
+    let mut memory_bus = build_memory_bus(&mut memory_mock);
+
+    let mut cpu = Cpu::new();
+    cpu.init();
+    cpu.zero = true;
+    cpu.start(&mut memory_bus);
+
+    assert_eq!(cpu.pc, 0x14 + 3);
+}
+
+#[test]
+fn branch_equal_no_follow() {
+    let mut memory_mock = MemoryMock::new();
+    memory_mock.add_byte(0x0000, 0xf0);
+    memory_mock.add_byte(0x0001, 0x14);
+    let mut memory_bus = build_memory_bus(&mut memory_mock);
+
+    let mut cpu = Cpu::new();
+    cpu.init();
+    cpu.zero = false;
+    cpu.start(&mut memory_bus);
+
+    assert_eq!(cpu.pc, 0x03);
+}
+
+#[test]
+fn branch_not_equal_follow() {
+
+    let mut memory_mock = MemoryMock::new();
+    memory_mock.add_byte(0x0000, 0xd0);
+    memory_mock.add_byte(0x0001, 0x14);
+    let mut memory_bus = build_memory_bus(&mut memory_mock);
+
+    let mut cpu = Cpu::new();
+    cpu.init();
+    cpu.zero = false;
+    cpu.start(&mut memory_bus);
+
+    assert_eq!(cpu.pc, 0x14 + 3);
+}
+
+#[test]
+fn branch_not_equal_no_follow() {
+    let mut memory_mock = MemoryMock::new();
+    memory_mock.add_byte(0x0000, 0xd0);
+    memory_mock.add_byte(0x0001, 0x14);
+    let mut memory_bus = build_memory_bus(&mut memory_mock);
+
+    let mut cpu = Cpu::new();
+    cpu.init();
+    cpu.zero = true;
+    cpu.start(&mut memory_bus);
+
+    assert_eq!(cpu.pc, 0x3);
+}
+
+#[test]
+fn bit_zero_is_zero() {
+    const RA: Byte =  0b10101010;
+    const MEM: Byte = 0b01010101;
+    let mut memory_mock = MemoryMock::new();
+    memory_mock.add_byte(0x0000, 0x24);
+    memory_mock.add_byte(0x0001, 0x24);
+    memory_mock.add_byte(0x0024, MEM);
+    let mut memory_bus = build_memory_bus(&mut memory_mock);
+
+    let mut cpu = Cpu::new();
+    cpu.init();
+
+    cpu.ra = RA;
+
+    cpu.start(&mut memory_bus);
+
+    assert!(cpu.zero);
+}
+
+#[test]
+fn bit_zero_is_negative() {
+    const RA: Byte =  0b10000000;
+    const MEM: Byte = 0b10001111;
+    let mut memory_mock = MemoryMock::new();
+    memory_mock.add_byte(0x0000, 0x24);
+    memory_mock.add_byte(0x0001, 0x24);
+    memory_mock.add_byte(0x0024, MEM);
+    let mut memory_bus = build_memory_bus(&mut memory_mock);
+
+    let mut cpu = Cpu::new();
+    cpu.init();
+
+    cpu.ra = RA;
+
+    cpu.start(&mut memory_bus);
+
+    assert!(cpu.negative);
+}
+
+test_clock_cycle!(bit_zero_clock, 0x24, 3);
+
+#[test]
+fn bit_abs_is_zero() {
+    const RA: Byte =  0b10101010;
+    const MEM: Byte = 0b01010101;
+    let mut memory_mock = MemoryMock::new();
+    memory_mock.add_byte(0x0000, 0x2c);
+    memory_mock.add_byte(0x0001, 0x00);
+    memory_mock.add_byte(0x0002, 0x2c);
+    memory_mock.add_byte(0x002c, MEM);
+
+    let mut memory_bus = build_memory_bus(&mut memory_mock);
+
+    let mut cpu = Cpu::new();
+    cpu.init();
+
+    cpu.ra = RA;
+
+    cpu.start(&mut memory_bus);
+
+    assert!(cpu.zero);
+}
+
+#[test]
+fn bit_abs_is_negative() {
+    const RA: Byte = 0b10000000;
+    const MEM: Byte = 0b10001100;
+    let mut memory_mock = MemoryMock::new();
+    memory_mock.add_byte(0x0000, 0x2c);
+    memory_mock.add_byte(0x0001, 0x00);
+    memory_mock.add_byte(0x0002, 0x2c);
+    memory_mock.add_byte(0x002c, MEM);
+
+    let mut memory_bus = build_memory_bus(&mut memory_mock);
+    let mut cpu = Cpu::new();
+    cpu.init();
+
+    cpu.ra = RA;
+
+    cpu.start(&mut memory_bus);
+    assert!(cpu.negative);
+}
+
+test_clock_cycle!(bit_abs_clock, 0x2c, 4);
+
+#[test]
+fn inc_x() {
+    const DATA: Byte = 0x11;
+    let mut memory_mock = MemoryMock::new();
+    memory_mock.add_byte(0x0000, 0xe8);
+
+    let mut memory_bus = build_memory_bus(&mut memory_mock);
+    let mut cpu = Cpu::new();
+    cpu.init();
+
+    cpu.rx = DATA;
+
+    cpu.start(&mut memory_bus);
+    assert_eq!(cpu.rx, DATA + 1);
+}
+
+#[test]
+fn inc_x_overflow() {
+    const DATA: Byte = 0xff;
+    let mut memory_mock = MemoryMock::new();
+    memory_mock.add_byte(0x0000, 0xe8);
+
+    let mut memory_bus = build_memory_bus(&mut memory_mock);
+    let mut cpu = Cpu::new();
+    cpu.init();
+
+    cpu.rx = DATA;
+    cpu.start(&mut memory_bus);
+    assert_eq!(cpu.rx, 0x00);
+}
+
+test_clock_cycle!(inc_x_clock, 0xe8, 2);
+
+#[test]
+fn inc_y() {
+    const DATA: Byte = 0xf1;
+    let mut memory_mock = MemoryMock::new();
+    memory_mock.add_byte(0x0000, 0xc8);
+
+    let mut memory_bus = build_memory_bus(&mut memory_mock);
+    let mut cpu = Cpu::new();
+    cpu.init();
+
+    cpu.ry = DATA;
+
+    cpu.start(&mut memory_bus);
+    assert_eq!(cpu.ry, DATA + 1);
+}
+
+test_clock_cycle!(inc_y_clock, 0xc8, 2);
 
 struct MemoryMock {
     memory_locations: HashMap<Word, Byte>,
@@ -636,11 +875,11 @@ impl MemoryMock {
 }
 
 impl OnBus for MemoryMock {
-    fn read_byte(&self, addr: Word) -> Byte {
+    fn read_byte(&self, addr: Word, _range: &MemRange) -> Byte {
         *self.memory_locations.get(&addr).unwrap_or(&0x00)
     }
 
-    fn write_byte(&mut self, addr: Word, data: Byte) {
+    fn write_byte(&mut self, addr: Word, _range: &MemRange, data: Byte) {
         self.add_byte(addr, data);
     }
 }
@@ -650,3 +889,4 @@ fn build_memory_bus<'a>(memory_mock: &'a mut MemoryMock) -> MemoryBus<'a> {
     memory_bus_builder.register_io(0x0..0xFFFF, memory_mock);
     memory_bus_builder.build()
 }
+

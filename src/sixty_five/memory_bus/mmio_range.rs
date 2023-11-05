@@ -5,7 +5,7 @@ use crate::sixty_five::data_types::Word;
 use super::OnBus;
 
 #[derive(PartialEq, Eq)]
-pub struct MemRange(Range<Word>);
+pub struct MemRange(pub Range<Word>);
 
 impl MemRange {
     pub fn compare_with_word(&self, word: &Word) -> std::cmp::Ordering {

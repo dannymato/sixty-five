@@ -1,3 +1,5 @@
+use crate::sixty_five::data_types::SignedWord;
+
 use self::code::Opcode;
 use super::{
     data_types::{Byte, Word},
@@ -13,7 +15,9 @@ pub trait OpcodeDecoder {
     fn decode_opcode(cpu: &mut Cpu, memory: &MemoryBus) -> Opcode;
 }
 
-type ClockHandler<'a> = Box<dyn FnMut(u32) + 'a>;
+pub trait ClockHandler {
+    fn handle_clock(&mut self, clocks: u32);
+}
 
 macro_rules! load_register {
     ($self:ident, $variable:ident, $register:ident) => {
@@ -53,7 +57,7 @@ pub struct Cpu<'a> {
     break_command: bool,
     overflow: bool,
     negative: bool,
-    clock_handlers: Vec<ClockHandler<'a>>,
+    clock_handlers: Vec<&'a mut dyn ClockHandler>,
 }
 
 impl<'a> Cpu<'a> {
@@ -108,9 +112,31 @@ impl<'a> Cpu<'a> {
             Opcode::BranchNotEqual(addr) => self.branch_not_equal(addr),
             Opcode::BranchPositive(addr) => self.branch_positive(addr),
             Opcode::BranchMinus(addr) => self.branch_minus(addr),
+            Opcode::BitTestZero(addr) => self.bit_test_zero_page(bus, addr),
+            Opcode::BitTestAbs(addr) => self.bit_test_abs(bus, addr),
             Opcode::Break => self.break_command = true,
             _ => todo!(),
         }
+    }
+
+    fn bit_test_zero_page(&mut self, bus: &mut MemoryBus, addr: Byte) {
+        let value = bus.read_from_zero_page(addr as Word);
+        let result = value & self.ra;
+        self.load_flags_from_artith(result);
+        self.increment_clock(3);
+    }
+
+    fn bit_test_abs(&mut self, bus: &mut MemoryBus, addr: Word) {
+        let value = bus.read_byte(addr);
+        let result = value & self.ra;
+        self.load_flags_from_artith(result);
+        self.increment_clock(4);
+    }
+
+    fn load_flags_from_artith(&mut self, value: Byte) {
+        self.set_zero(value);
+        self.set_negative(value);
+        self.set_overflow(value);
     }
 
     fn execute_branch(&mut self, addr: Byte, expr: fn(&mut Cpu) -> bool) {
@@ -120,7 +146,8 @@ impl<'a> Cpu<'a> {
         }
 
         let current_pc = self.pc;
-        self.pc += addr as Word;
+        let new_value = (self.pc as SignedWord) + (addr as SignedWord);
+        self.pc = new_value as Word;
          let clock_count = if page_crossed(current_pc, self.pc) {
             5
         } else {
@@ -254,13 +281,13 @@ impl<'a> Cpu<'a> {
     }
 
     fn inc_x(&mut self) {
-        let x = self.rx + 1;
+        let x = self.rx.wrapping_add(1);
         load_register!(self, x, rx);
         self.increment_clock(2);
     }
 
     fn inc_y(&mut self) {
-        let y = self.ry + 1;
+        let y = self.ry.wrapping_add(1);
         load_register!(self, y, ry);
         self.increment_clock(2);
     }
@@ -270,20 +297,24 @@ impl<'a> Cpu<'a> {
     }
 
     fn set_negative(&mut self, byte: Byte) {
-        self.negative = 0b1000000 & byte > 0;
+        self.negative = 0b10000000 & byte > 0;
     }
 
     fn set_zero(&mut self, byte: Byte) {
         self.zero = byte == 0;
     }
 
+    fn set_overflow(&mut self, byte: Byte) {
+        self.overflow = 0b01000000 & byte > 0;
+    }
+
     fn increment_clock(&mut self, cycles_used: u32) {
-        for handler in &mut self.clock_handlers {
-            handler(cycles_used);
+        for handler in self.clock_handlers.iter_mut() {
+            handler.handle_clock(cycles_used);
         }
     }
 
-    pub fn register_clock_handler(&mut self, handler: ClockHandler<'a>) {
+    pub fn register_clock_handler(&mut self, handler: &'a mut dyn ClockHandler) {
         self.clock_handlers.push(handler);
     }
 

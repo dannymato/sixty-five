@@ -1,14 +1,14 @@
 use std::{collections::BinaryHeap, ops::Range};
 
-use self::mmio_range::MMIOMapping;
+use self::mmio_range::{MMIOMapping, MemRange};
 
 use super::data_types::{Byte, Word};
 
-mod mmio_range;
+pub mod mmio_range;
 
 pub trait OnBus {
-    fn write_byte(&mut self, addr: Word, data: Byte);
-    fn read_byte(&self, addr: Word) -> Byte;
+    fn write_byte(&mut self, addr: Word, mapping_range: &MemRange, data: Byte);
+    fn read_byte(&self, addr: Word, mapping_range: &MemRange) -> Byte;
 }
 
 pub struct MemoryBus<'a> {
@@ -21,13 +21,13 @@ impl<'a> MemoryBus<'a> {
     }
 
     pub fn write_byte(&mut self, addr: Word, data: Byte) {
-        self.with_mut_io(addr, |io| {
-            io.write_byte(addr, data);
+        self.with_mut_io(addr, |range, io| {
+            io.write_byte(addr, range, data);
         });
     }
 
     pub fn read_byte(&self, addr: Word) -> Byte {
-        self.with_read_io(addr, |io| io.read_byte(addr))
+        self.with_read_io(addr, |range, io| io.read_byte(addr, range))
     }
 
     pub fn read_from_zero_page(&self, addr: Word) -> Byte {
@@ -36,25 +36,25 @@ impl<'a> MemoryBus<'a> {
 
     fn with_read_io<Return, F>(&self, addr: Word, func: F) -> Return
     where
-        F: FnOnce(&dyn OnBus) -> Return,
+        F: FnOnce(&MemRange, &dyn OnBus) -> Return,
     {
         let result = self.io_index_for_addr(addr);
         let index = result.unwrap();
         let mapping = &self.ranges[index];
 
-        func(mapping.1)
+        func(&mapping.0, mapping.1)
     }
 
     fn with_mut_io<Return, F>(&mut self, addr: Word, func: F) -> Return
     where
-        F: FnOnce(&mut dyn OnBus) -> Return,
+        F: FnOnce(&MemRange, &mut dyn OnBus) -> Return,
     {
         let result = self.io_index_for_addr(addr);
         // TODO: Probably return a result
 
         let index = result.unwrap();
         let mapping = self.ranges.get_mut(index).unwrap();
-        func(mapping.1)
+        func(&mapping.0, mapping.1)
     }
 
     fn io_index_for_addr(&self, addr: Word) -> Result<usize, usize> {
