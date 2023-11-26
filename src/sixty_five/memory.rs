@@ -1,6 +1,6 @@
 use super::{
     data_types::{Byte, Word},
-    memory_bus::{OnBus, mmio_range::MemRange},
+    memory_bus::{mmio_range::MemRange, OnBus},
 };
 
 const MEM_SIZE: usize = 1024;

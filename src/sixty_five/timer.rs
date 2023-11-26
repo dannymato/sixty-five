@@ -1,4 +1,8 @@
-use super::{memory_bus::{OnBus, mmio_range::MemRange}, data_types::{Word, Byte}, cpu::ClockHandler};
+use super::{
+    cpu::ClockHandler,
+    data_types::{Byte, Word},
+    memory_bus::{mmio_range::MemRange, OnBus},
+};
 
 #[cfg(test)]
 mod tests;
@@ -12,7 +16,10 @@ const TIMER_START: u32 = 0xffu32;
 
 impl Timer {
     pub fn new() -> Self {
-        Timer { current_time: 0xff, current_interval: 0 }
+        Timer {
+            current_time: 0xff,
+            current_interval: 0,
+        }
     }
 
     fn reset(&mut self, interval: u32) {
@@ -24,7 +31,7 @@ impl Timer {
 impl OnBus for Timer {
     fn read_byte(&self, addr: Word, _mapping_range: &MemRange) -> Byte {
         if addr & 0x284 == 0x284 {
-            return (self.current_time / self.current_interval) as Byte
+            return (self.current_time / self.current_interval) as Byte;
         }
         0x0
     }

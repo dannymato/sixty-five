@@ -20,6 +20,10 @@ impl<'a> MemoryBus<'a> {
         MemoryBus { ranges }
     }
 
+    pub fn write_to_zero_page(&mut self, addr: Word, data: Byte) {
+        self.write_byte(addr & 0x00FF, data)
+    }
+
     pub fn write_byte(&mut self, addr: Word, data: Byte) {
         self.with_mut_io(addr, |range, io| {
             io.write_byte(addr, range, data);

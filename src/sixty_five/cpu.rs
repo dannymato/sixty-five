@@ -1,8 +1,6 @@
-use crate::sixty_five::data_types::SignedWord;
-
 use self::code::Opcode;
 use super::{
-    data_types::{Byte, Word},
+    data_types::{Byte, SignedWord, Word},
     memory_bus::MemoryBus,
 };
 use std::fmt::Display;
@@ -92,6 +90,9 @@ impl<'a> Cpu<'a> {
             Opcode::LoadYImmediate(val) => self.load_y_immediate(val),
             Opcode::LoadAZeroPageX(addr) => self.load_a_zero_page_x(bus, addr),
             Opcode::LoadAAbsolute(addr) => self.load_a_absolute(bus, addr),
+            Opcode::StoreAZeroPage(addr) => self.store_a_zero_page(bus, addr),
+            Opcode::StoreAZeroPageX(addr) => self.store_a_zero_page_x(bus, addr),
+            Opcode::StoreAAbsolute(addr) => self.store_a_absolute(bus, addr),
             Opcode::MoveAY => self.move_a_y(),
             Opcode::MoveAX => self.move_a_x(),
             Opcode::MoveSX => self.move_s_x(),
@@ -101,8 +102,13 @@ impl<'a> Cpu<'a> {
             Opcode::AndImm(value) => self.and_immediate(value),
             Opcode::AndZero(addr) => self.and_zero(bus, addr),
             Opcode::AndZeroX(addr) => self.and_zero_x(bus, addr),
+            Opcode::AndAbs(addr) => self.and_absolute(bus, addr),
+            Opcode::AndAbsX(addr) => self.and_absolute_x(bus, addr),
+            Opcode::AndAbsY(addr) => self.and_absolute_y(bus, addr),
             Opcode::JumpAbs(addr) => self.jump_abs(addr),
             Opcode::JumpInd(addr) => self.jump_ind(bus, addr),
+            Opcode::AndIndX(addr) => self.and_indirect_x(bus, addr),
+            Opcode::AndIndY(addr) => self.and_indirect_y(bus, addr),
             Opcode::IncX => self.inc_x(),
             Opcode::IncY => self.inc_y(),
             Opcode::NoOp => self.noop(),
@@ -115,7 +121,6 @@ impl<'a> Cpu<'a> {
             Opcode::BitTestZero(addr) => self.bit_test_zero_page(bus, addr),
             Opcode::BitTestAbs(addr) => self.bit_test_abs(bus, addr),
             Opcode::Break => self.break_command = true,
-            _ => todo!(),
         }
     }
 
@@ -148,7 +153,7 @@ impl<'a> Cpu<'a> {
         let current_pc = self.pc;
         let new_value = (self.pc as SignedWord) + (addr as SignedWord);
         self.pc = new_value as Word;
-         let clock_count = if page_crossed(current_pc, self.pc) {
+        let clock_count = if page_crossed(current_pc, self.pc) {
             5
         } else {
             3
@@ -213,6 +218,57 @@ impl<'a> Cpu<'a> {
         self.increment_clock(4);
     }
 
+    fn and_absolute(&mut self, bus: &MemoryBus, addr: Word) {
+        let value = bus.read_byte(addr);
+        let value = value & self.ra;
+        load_register!(self, value, ra);
+        self.increment_clock(4);
+    }
+
+    #[inline]
+    fn and_absolute_plus(&mut self, bus: &MemoryBus, addr: Word, adder: Byte) {
+        let new_addr = addr + adder as Word;
+        let value = bus.read_byte(new_addr);
+        let value = value & self.ra;
+
+        load_register!(self, value, ra);
+        let clock = if page_crossed(addr, new_addr) { 5 } else { 4 };
+        self.increment_clock(clock);
+    }
+
+    fn and_absolute_x(&mut self, bus: &MemoryBus, addr: Word) {
+        self.and_absolute_plus(bus, addr, self.rx)
+    }
+
+    fn and_absolute_y(&mut self, bus: &MemoryBus, addr: Word) {
+        self.and_absolute_plus(bus, addr, self.ry)
+    }
+
+    fn and_indirect_x(&mut self, bus: &MemoryBus, addr: Byte) {
+        let init_addr = addr.wrapping_add(self.rx);
+        let addr = bus.read_from_zero_page(init_addr as Word);
+        let value = bus.read_from_zero_page(addr as Word);
+        let value = value & self.ra;
+
+        load_register!(self, value, ra);
+        self.increment_clock(6);
+    }
+
+    fn and_indirect_y(&mut self, bus: &MemoryBus, addr: Byte) {
+        let init_addr = bus.read_byte(addr as Word);
+        let addr = init_addr + self.ry;
+        let value = bus.read_byte(addr as Word);
+        let value = value & self.ra;
+
+        load_register!(self, value, ra);
+        let cycles_used = if page_crossed(init_addr as Word, addr as Word) {
+            6
+        } else {
+            5
+        };
+        self.increment_clock(cycles_used)
+    }
+
     fn load_a_immediate(&mut self, value: Byte) {
         load_register!(self, value, ra);
         self.increment_clock(2);
@@ -242,6 +298,26 @@ impl<'a> Cpu<'a> {
     fn load_y_immediate(&mut self, value: Byte) {
         load_register!(self, value, ry);
         self.increment_clock(2);
+    }
+
+    fn store_a_zero_page(&mut self, bus: &mut MemoryBus, addr: Byte) {
+        bus.write_byte(addr as Word, self.ra);
+        self.increment_clock(3);
+    }
+
+    fn store_a_zero_page_x(&mut self, bus: &mut MemoryBus, addr: Byte) {
+        bus.write_to_zero_page(addr.wrapping_add(self.rx) as Word, self.ra);
+        self.increment_clock(4);
+    }
+
+    fn store_a_absolute(&mut self, bus: &mut MemoryBus, addr: Word) {
+        bus.write_byte(addr, self.ra);
+        self.increment_clock(4);
+    }
+
+    fn store_a_absolute_x(&mut self, bus: &mut MemoryBus, addr: Word) {
+        bus.write_byte(addr + self.rx as Word, self.ra);
+        self.increment_clock(5);
     }
 
     fn move_a_y(&mut self) {

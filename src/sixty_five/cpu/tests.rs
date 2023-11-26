@@ -2,10 +2,10 @@ use std::collections::HashMap;
 
 use crate::sixty_five::{
     data_types::{Byte, Word},
-    memory_bus::{MemoryBus, MemoryBusBuilder, OnBus, mmio_range::MemRange},
+    memory_bus::{mmio_range::MemRange, MemoryBus, MemoryBusBuilder, OnBus},
 };
 
-use super::{Cpu, ClockHandler};
+use super::{ClockHandler, Cpu};
 
 #[derive(Default)]
 struct ClockWatcher {
@@ -584,7 +584,6 @@ fn branch_carry_set_follow_branch() {
 
     cpu.start(&mut memory_bus);
     assert_eq!(cpu.pc, 0x14 + 3);
-
 }
 
 #[test]
@@ -692,7 +691,6 @@ fn branch_equal_no_follow() {
 
 #[test]
 fn branch_not_equal_follow() {
-
     let mut memory_mock = MemoryMock::new();
     memory_mock.add_byte(0x0000, 0xd0);
     memory_mock.add_byte(0x0001, 0x14);
@@ -723,7 +721,7 @@ fn branch_not_equal_no_follow() {
 
 #[test]
 fn bit_zero_is_zero() {
-    const RA: Byte =  0b10101010;
+    const RA: Byte = 0b10101010;
     const MEM: Byte = 0b01010101;
     let mut memory_mock = MemoryMock::new();
     memory_mock.add_byte(0x0000, 0x24);
@@ -743,7 +741,7 @@ fn bit_zero_is_zero() {
 
 #[test]
 fn bit_zero_is_negative() {
-    const RA: Byte =  0b10000000;
+    const RA: Byte = 0b10000000;
     const MEM: Byte = 0b10001111;
     let mut memory_mock = MemoryMock::new();
     memory_mock.add_byte(0x0000, 0x24);
@@ -765,7 +763,7 @@ test_clock_cycle!(bit_zero_clock, 0x24, 3);
 
 #[test]
 fn bit_abs_is_zero() {
-    const RA: Byte =  0b10101010;
+    const RA: Byte = 0b10101010;
     const MEM: Byte = 0b01010101;
     let mut memory_mock = MemoryMock::new();
     memory_mock.add_byte(0x0000, 0x2c);
@@ -858,6 +856,43 @@ fn inc_y() {
 
 test_clock_cycle!(inc_y_clock, 0xc8, 2);
 
+#[test]
+fn test_store_a_zero() {
+    const DATA: Byte = 0xf1;
+    let mut memory_mock = MemoryMock::new();
+    memory_mock.add_byte(0x0000, 0x85);
+    memory_mock.add_byte(0x0001, 0x15);
+
+    let mut memory_bus = build_memory_bus(&mut memory_mock);
+    let mut cpu = Cpu::new();
+    cpu.init();
+    cpu.ra = DATA;
+
+    cpu.start(&mut memory_bus);
+    assert_eq!(cpu.ra, memory_bus.read_byte(0x15));
+}
+
+test_clock_cycle!(store_a_zero_clock, 0x85, 3);
+
+#[test]
+fn test_store_a_zero_x() {
+    const DATA: Byte = 0xff;
+    let mut memory_mock = MemoryMock::new();
+    memory_mock.add_byte(0x0000, 0x95);
+    memory_mock.add_byte(0x0001, 0x15);
+    let mut memory_bus = build_memory_bus(&mut memory_mock);
+    let mut cpu = Cpu::new();
+    cpu.init();
+    cpu.ra = DATA;
+    cpu.rx = 0x15;
+
+    cpu.start(&mut memory_bus);
+
+    assert_eq!(cpu.ra, memory_bus.read_byte(0x15 + 0x15));
+}
+
+test_clock_cycle!(store_a_zero_x_clock, 0x95, 4);
+
 struct MemoryMock {
     memory_locations: HashMap<Word, Byte>,
 }
@@ -889,4 +924,3 @@ fn build_memory_bus<'a>(memory_mock: &'a mut MemoryMock) -> MemoryBus<'a> {
     memory_bus_builder.register_io(0x0..0xFFFF, memory_mock);
     memory_bus_builder.build()
 }
-
