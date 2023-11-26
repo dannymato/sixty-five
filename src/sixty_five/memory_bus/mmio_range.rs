@@ -17,7 +17,7 @@ impl MemRange {
             return std::cmp::Ordering::Less;
         }
 
-        return std::cmp::Ordering::Greater;
+        std::cmp::Ordering::Greater
     }
 }
 

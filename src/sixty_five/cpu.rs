@@ -77,7 +77,7 @@ impl<'a> Cpu<'a> {
     }
 
     fn run_cycle(&mut self, bus: &mut MemoryBus) {
-        let inst = Opcode::decode_opcode(self, &bus);
+        let inst = Opcode::decode_opcode(self, bus);
 
         self.execute(inst, bus);
     }

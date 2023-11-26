@@ -13,11 +13,11 @@ pub fn derive_decoder(item: proc_macro::TokenStream) -> proc_macro::TokenStream 
 
 fn generate_code(ast: &DeriveInput) -> proc_macro2::TokenStream {
     let ident = &ast.ident;
-    let enum_data = pull_enum(&ast);
+    let enum_data = pull_enum(ast);
     let arms = enum_data
         .variants
         .iter()
-        .map(|var| generate_arm(&ident, var));
+        .map(|var| generate_arm(ident, var));
     let tokens = quote! {
         use crate::sixty_five::{memory_bus::MemoryBus, cpu::Cpu};
         impl OpcodeDecoder for #ident {

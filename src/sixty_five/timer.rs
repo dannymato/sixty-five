@@ -56,7 +56,7 @@ impl ClockHandler for Timer {
             let current = self.current_time;
             self.reset(1);
             // Need to add the rest of the clocks necessary
-            self.current_time = self.current_time - (clocks - current);
+            self.current_time -= clocks - current;
             return;
         }
 
