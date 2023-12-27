@@ -7,7 +7,6 @@ pub fn derive_decoder(item: proc_macro::TokenStream) -> proc_macro::TokenStream 
     let input = parse_macro_input!(item as DeriveInput);
 
     let impl_gen = generate_code(&input);
-    // panic!("{}", impl_gen.to_string());
     impl_gen.into()
 }
 

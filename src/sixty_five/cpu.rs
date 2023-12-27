@@ -41,6 +41,37 @@ macro_rules! load_register_zero_page_plus {
     };
 }
 
+macro_rules! add_register {
+    ($self:ident, $register:ident, $operand:ident) => {
+        let value = $self.$register + $operand;
+        $self.negative = select_bit(value, 7) > 0;
+        $self.zero = value == 0;
+
+
+    };
+}
+
+const BIT_MASK: u8 = 0b00000001;
+const fn select_bit(value: Byte, bit: Byte) -> Byte {
+    value & (BIT_MASK << bit)
+}
+
+const fn has_overflow(a: Byte, b: Byte, out: Byte) -> bool {
+    let a_7 = select_bit(a, 7);
+    let b_7 = select_bit(b, 7);
+    let out_7 = select_bit(out, 7);
+
+    if a_7 & b_7 > 0 {
+        return out_7 == 0;
+    }
+
+    if a_7 | b_7 == 0 {
+        return out_7 > 0
+    }
+    false
+}
+
+
 #[derive(Default)]
 pub struct Cpu<'a> {
     pc: Word,
@@ -93,12 +124,23 @@ impl<'a> Cpu<'a> {
             Opcode::StoreAZeroPage(addr) => self.store_a_zero_page(bus, addr),
             Opcode::StoreAZeroPageX(addr) => self.store_a_zero_page_x(bus, addr),
             Opcode::StoreAAbsolute(addr) => self.store_a_absolute(bus, addr),
+            Opcode::StoreAAbsoluteX(addr) => self.store_a_absolute_x(bus, addr),
+            Opcode::StoreAAbsoluteY(addr) => self.store_a_absolute_y(bus, addr),
+            Opcode::StoreAIndirectX(addr) => self.store_a_indirect_x(bus, addr),
+            Opcode::StoreAIndirectY(addr) => self.store_a_indirect_y(bus, addr),
+            Opcode::StoreXZeroPage(addr) => self.store_x_zero_page(bus, addr),
+            Opcode::StoreXZeroPageY(addr) => self.store_x_zero_page_y(bus, addr),
+            Opcode::StoreXAbsolute(addr) => self.store_x_absolute(bus, addr),
+            Opcode::StoreYZeroPage(addr) => self.store_y_zero_page(bus, addr),
+            Opcode::StoreYZeroPageX(addr) => self.store_y_zero_page_x(bus, addr),
+            Opcode::StoreYAbsolute(addr) => self.store_y_absolute(bus, addr),
             Opcode::MoveAY => self.move_a_y(),
             Opcode::MoveAX => self.move_a_x(),
             Opcode::MoveSX => self.move_s_x(),
             Opcode::MoveXA => self.move_x_a(),
             Opcode::MoveXS => self.move_x_s(),
             Opcode::MoveYA => self.move_y_a(),
+            Opcode::AddImmediate(operand) => self.add_immediate(operand),
             Opcode::AndImm(value) => self.and_immediate(value),
             Opcode::AndZero(addr) => self.and_zero(bus, addr),
             Opcode::AndZeroX(addr) => self.and_zero_x(bus, addr),
@@ -196,6 +238,14 @@ impl<'a> Cpu<'a> {
         let addr = self.fetch_word(bus);
         self.pc = addr;
         self.increment_clock(5);
+    }
+
+    fn add_immediate(&mut self, operand: Byte) {
+        if self.decimal_mode {
+            todo!("Don't know about decimal mode");
+        }
+
+        add_register!(self, ra, operand);
     }
 
     fn and_immediate(&mut self, value: Byte) {
@@ -318,6 +368,55 @@ impl<'a> Cpu<'a> {
     fn store_a_absolute_x(&mut self, bus: &mut MemoryBus, addr: Word) {
         bus.write_byte(addr + self.rx as Word, self.ra);
         self.increment_clock(5);
+    }
+
+    fn store_a_absolute_y(&mut self, bus: &mut MemoryBus, addr: Word) {
+        bus.write_byte(addr + self.ry as Word, self.ra);
+        self.increment_clock(5);
+    }
+
+    fn store_a_indirect_x(&mut self, bus: &mut MemoryBus, addr: Byte) {
+        let addr = bus.read_from_zero_page(addr.wrapping_add(self.rx) as Word);
+        bus.write_byte(addr as Word, self.ra);
+        self.increment_clock(6);
+    }
+
+    fn store_a_indirect_y(&mut self, bus: &mut MemoryBus, addr: Byte) {
+        let addr = bus.read_from_zero_page(addr as Word) + self.ry;
+        bus.write_byte(addr as Word, self.ra);
+        self.increment_clock(6);
+    }
+
+    fn store_x_zero_page(&mut self, bus: &mut MemoryBus, addr: Byte) {
+        bus.write_byte(addr as Word, self.rx);
+        self.increment_clock(3);
+    }
+
+    fn store_x_zero_page_y(&mut self, bus: &mut MemoryBus, addr: Byte) {
+        let addr = addr.wrapping_add(self.ry);
+        bus.write_byte(addr as Word, self.rx);
+        self.increment_clock(4);
+    }
+
+    fn store_x_absolute(&mut self, bus: &mut MemoryBus, addr: Word) {
+        bus.write_byte(addr, self.rx);
+        self.increment_clock(4);
+    }
+
+    fn store_y_zero_page(&mut self, bus: &mut MemoryBus, addr: Byte) {
+        bus.write_byte(addr as Word, self.ry);
+        self.increment_clock(3);
+    }
+
+    fn store_y_zero_page_x(&mut self, bus: &mut MemoryBus, addr: Byte) {
+        let addr = addr.wrapping_add(self.rx);
+        bus.write_byte(addr as Word, self.ry);
+        self.increment_clock(4);
+    }
+
+    fn store_y_absolute(&mut self, bus: &mut MemoryBus, addr: Word) {
+        bus.write_byte(addr, self.ry);
+        self.increment_clock(4);
     }
 
     fn move_a_y(&mut self) {
