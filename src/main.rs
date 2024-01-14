@@ -1,23 +1,55 @@
-use sixty_five::{memory::Memory, memory_bus::MemoryBusBuilder};
+use std::env;
 
-use crate::sixty_five::{cpu::Cpu, timer::Timer};
+use anyhow::anyhow;
+use sixty_five::{cartridge::Cartridge, memory::Memory, memory_bus::NullBus, cpu::ClockHandler};
+
+use crate::sixty_five::{
+    cpu::Cpu,
+    memory_bus::{BusMember, MemoryBus},
+    timer::Timer,
+};
 
 mod sixty_five;
 
-fn main() {
-    let mut memory = Memory::new();
-    let mut bus_builder = MemoryBusBuilder::new();
+#[derive(Default)]
+struct ClockCounter {
+    count: u128,
+}
 
-    bus_builder.register_io(0x0080..0x0100, &mut memory);
+impl ClockHandler for ClockCounter {
+    fn handle_clock(&mut self, clocks: u32) {
+        self.count += clocks as u128;
+    }
+}
 
-    let mut bus = bus_builder.build();
-    bus.write_byte(0x81, 0xb0);
+fn main() -> anyhow::Result<()> {
+    let args = env::args();
+    if args.len() < 2 {
+        return Err(anyhow::anyhow!("Did not pass path to cart"));
+    }
+
+    let cart_path = args.last().ok_or_else(|| anyhow!("Cart path invalid"))?;
+
+    let cartidge = Cartridge::new(cart_path)?;
+
+    let memory = Memory::new();
+    let mut memory = BusMember::MainMemory(memory);
+    let mut null_bus = BusMember::Null(NullBus {});
+    let mut cartridge = BusMember::Cartridge(cartidge);
+    let mut memory_bus = MemoryBus::new(&mut memory, &mut null_bus, &mut cartridge);
 
     let mut timer = Timer::new();
 
-    println!("Got from bus {:#02x}", bus.read_byte(0x00));
     let mut cpu = Cpu::new();
     cpu.register_clock_handler(&mut timer);
+    let mut clock_counter = ClockCounter::default();
+    cpu.register_clock_handler(&mut clock_counter);
     cpu.init();
-    cpu.start(&mut bus);
+    cpu.start(&mut memory_bus).map_err(|err| {
+       eprintln!("Error occurred clocks completed: {}", clock_counter.count);
+
+        err
+    })?;
+
+    Ok(())
 }

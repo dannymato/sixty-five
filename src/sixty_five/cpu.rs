@@ -1,8 +1,12 @@
+use anyhow;
+
 use self::code::Opcode;
 use super::{
+    bit_utils::is_bit_set,
     data_types::{Byte, SignedWord, Word},
     memory_bus::MemoryBus,
 };
+
 use std::fmt::Display;
 
 mod code;
@@ -10,7 +14,7 @@ mod code;
 mod tests;
 
 pub trait OpcodeDecoder {
-    fn decode_opcode(cpu: &mut Cpu, memory: &MemoryBus) -> Opcode;
+    fn decode_opcode(cpu: &mut Cpu, memory: &MemoryBus) -> anyhow::Result<Opcode>;
 }
 
 pub trait ClockHandler {
@@ -43,34 +47,31 @@ macro_rules! load_register_zero_page_plus {
 
 macro_rules! add_register {
     ($self:ident, $register:ident, $operand:ident) => {
+        let original = $self.$register;
         let value = $self.$register + $operand;
-        $self.negative = select_bit(value, 7) > 0;
+        $self.negative = is_bit_set(value as Word, 7);
         $self.zero = value == 0;
-
-
+        $self.overflow = has_overflow(original, $operand, value);
+        $self.carry = $self.overflow;
     };
 }
 
-const BIT_MASK: u8 = 0b00000001;
-const fn select_bit(value: Byte, bit: Byte) -> Byte {
-    value & (BIT_MASK << bit)
-}
 
 const fn has_overflow(a: Byte, b: Byte, out: Byte) -> bool {
-    let a_7 = select_bit(a, 7);
-    let b_7 = select_bit(b, 7);
-    let out_7 = select_bit(out, 7);
+    let a7 = is_bit_set(a as Word, 7);
+    let b7 = is_bit_set(b as Word, 7);
+    let out7 = is_bit_set(out as Word, 7);
 
-    if a_7 & b_7 > 0 {
-        return out_7 == 0;
+    if a7 && b7  {
+        return !out7;
     }
 
-    if a_7 | b_7 == 0 {
-        return out_7 > 0
+    if !(a7 || b7) {
+        return out7;
     }
+
     false
 }
-
 
 #[derive(Default)]
 pub struct Cpu<'a> {
@@ -98,19 +99,22 @@ impl<'a> Cpu<'a> {
         self.sp = 0xff;
     }
 
-    pub fn start(&mut self, bus: &mut MemoryBus) {
-        self.pc = bus.read_byte(0xfffc) as Word;
-        self.pc |= (bus.read_byte(0xfffd) as Word) << 8;
+    pub fn start(&mut self, bus: &mut MemoryBus) -> anyhow::Result<()> {
+        self.pc = 0xfffc;
+        self.pc = self.fetch_word(bus);
+        println!("Init vector: {:#04x}", self.pc);
 
-        while !self.break_command {
-            self.run_cycle(bus)
+        loop {
+            self.run_cycle(bus)?;
         }
     }
 
-    fn run_cycle(&mut self, bus: &mut MemoryBus) {
-        let inst = Opcode::decode_opcode(self, bus);
+    fn run_cycle(&mut self, bus: &mut MemoryBus) -> anyhow::Result<()> {
+        let inst = Opcode::decode_opcode(self, bus)?;
 
         self.execute(inst, bus);
+
+        Ok(())
     }
 
     fn execute(&mut self, inst: Opcode, bus: &mut MemoryBus) {
@@ -140,7 +144,8 @@ impl<'a> Cpu<'a> {
             Opcode::MoveXA => self.move_x_a(),
             Opcode::MoveXS => self.move_x_s(),
             Opcode::MoveYA => self.move_y_a(),
-            Opcode::AddImmediate(operand) => self.add_immediate(operand),
+            Opcode::AddImmediate(value) => self.add_immediate(value),
+            Opcode::AddCarryZero(addr) => self.add_carry_zero(bus, addr),
             Opcode::AndImm(value) => self.and_immediate(value),
             Opcode::AndZero(addr) => self.and_zero(bus, addr),
             Opcode::AndZeroX(addr) => self.and_zero_x(bus, addr),
@@ -152,7 +157,9 @@ impl<'a> Cpu<'a> {
             Opcode::AndIndX(addr) => self.and_indirect_x(bus, addr),
             Opcode::AndIndY(addr) => self.and_indirect_y(bus, addr),
             Opcode::IncX => self.inc_x(),
+            Opcode::DecX => self.dec_x(),
             Opcode::IncY => self.inc_y(),
+            Opcode::DecY => self.dec_y(),
             Opcode::NoOp => self.noop(),
             Opcode::BranchCarryClear(addr) => self.branch_carry_clear(addr),
             Opcode::BranchCarrySet(addr) => self.branch_carry_set(addr),
@@ -162,6 +169,20 @@ impl<'a> Cpu<'a> {
             Opcode::BranchMinus(addr) => self.branch_minus(addr),
             Opcode::BitTestZero(addr) => self.bit_test_zero_page(bus, addr),
             Opcode::BitTestAbs(addr) => self.bit_test_abs(bus, addr),
+            Opcode::LShiftAcc => self.shift_left_acc(),
+            Opcode::CompYImm(value) => self.compare_y_imm(value),
+            Opcode::InterruptDisable => {
+                self.interrupt_disable = true;
+                self.increment_clock(2);
+            }
+            Opcode::ClearDecimalMode => {
+                self.decimal_mode = false;
+                self.increment_clock(2);
+            }
+            Opcode::ClearCarry => {
+                self.carry = false;
+                self.increment_clock(2);
+            }
             Opcode::Break => self.break_command = true,
         }
     }
@@ -243,6 +264,21 @@ impl<'a> Cpu<'a> {
     fn add_immediate(&mut self, operand: Byte) {
         if self.decimal_mode {
             todo!("Don't know about decimal mode");
+        }
+
+        add_register!(self, ra, operand);
+    }
+
+
+    fn add_carry_zero(&mut self, bus: &MemoryBus, addr: Byte) {
+        if self.decimal_mode {
+            todo!("Don't know about decimal mode");
+        }
+
+        let mut operand = bus.read_from_zero_page(addr as Word);
+
+        if self.carry {
+            operand += 1;
         }
 
         add_register!(self, ra, operand);
@@ -461,10 +497,35 @@ impl<'a> Cpu<'a> {
         self.increment_clock(2);
     }
 
+    fn dec_x(&mut self) {
+        let x = self.rx.wrapping_sub(1);
+        load_register!(self, x, rx);
+        self.increment_clock(2);
+    }
+
     fn inc_y(&mut self) {
         let y = self.ry.wrapping_add(1);
         load_register!(self, y, ry);
         self.increment_clock(2);
+    }
+
+    fn dec_y(&mut self) {
+        let y = self.ry.wrapping_sub(1);
+        load_register!(self, y, ry);
+        self.increment_clock(2);
+    }
+
+    fn shift_left_acc(&mut self) {
+        let orig_ra = self.ra;
+        let acc = self.ra.wrapping_shl(2);
+        load_register!(self, acc, ra);
+        self.carry = is_bit_set(orig_ra as Word, 7);
+        self.increment_clock(2);
+    }
+
+    fn compare_y_imm(&mut self, value: Byte) {
+        self.carry = self.ry >= value;
+        self.zero = self.ry == value;
     }
 
     fn noop(&mut self) {
@@ -494,6 +555,7 @@ impl<'a> Cpu<'a> {
     }
 
     fn fetch_byte(&mut self, memory: &MemoryBus) -> Byte {
+        print!("Fetching instr: ");
         let byte = memory.read_byte(self.pc);
         self.pc += 1;
         byte
@@ -502,7 +564,7 @@ impl<'a> Cpu<'a> {
     fn fetch_word(&mut self, memory: &MemoryBus) -> Word {
         let upper_byte = self.fetch_byte(memory) as Word;
 
-        upper_byte << 8 | self.fetch_byte(memory) as Word
+        upper_byte | ((self.fetch_byte(memory) as Word) << 8)
     }
 }
 

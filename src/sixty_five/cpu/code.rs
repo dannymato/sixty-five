@@ -8,7 +8,7 @@ use crate::sixty_five::data_types::{Byte, Word};
 #[derive(OpcodeDecoder)]
 pub enum Opcode {
     LoadAImmediate(Byte) = 0xa9,
-    LoadAZeroPage(Byte) = 0xa6,
+    LoadAZeroPage(Byte) = 0xa5,
     LoadAZeroPageX(Byte) = 0xb5,
     LoadAAbsolute(Word) = 0xad,
     LoadXImmediate(Byte) = 0xa2,
@@ -33,6 +33,7 @@ pub enum Opcode {
     MoveXA = 0x8a,
     MoveXS = 0x9a,
     AddImmediate(Byte) = 0x69,
+    AddCarryZero(Byte) = 0x65,
     AndImm(Byte) = 0x29,
     AndZero(Byte) = 0x25,
     AndZeroX(Byte) = 0x35,
@@ -44,7 +45,9 @@ pub enum Opcode {
     JumpAbs(Word) = 0x4c,
     JumpInd(Word) = 0x6c,
     IncX = 0xe8,
+    DecX = 0xca,
     IncY = 0xc8,
+    DecY = 0x88,
     NoOp = 0xea,
     BranchCarryClear(Byte) = 0x90,
     BranchCarrySet(Byte) = 0xb0,
@@ -54,5 +57,10 @@ pub enum Opcode {
     BranchPositive(Byte) = 0x10,
     BitTestZero(Byte) = 0x24,
     BitTestAbs(Word) = 0x2c,
+    LShiftAcc = 0x0a,
+    CompYImm(Byte) = 0xc0,
+    InterruptDisable = 0x78,
+    ClearDecimalMode = 0xd8,
+    ClearCarry = 0x18,
     Break = 0x00,
 }

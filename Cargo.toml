@@ -7,4 +7,6 @@ edition = "2021"
 
 [workspace]
 [dependencies]
+anyhow = "1.0.79"
 decoder_macro = { path = "./decoder_macro"}
+enum_delegate = "0.2.0"

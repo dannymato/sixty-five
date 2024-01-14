@@ -2,9 +2,7 @@ use std::ops::Range;
 
 use crate::sixty_five::data_types::Word;
 
-use super::OnBus;
-
-#[derive(PartialEq, Eq)]
+#[derive(Default, PartialEq, Eq)]
 pub struct MemRange(pub Range<Word>);
 
 impl MemRange {
@@ -45,30 +43,3 @@ impl Ord for MemRange {
     }
 }
 
-pub struct MMIOMapping<'a>(pub MemRange, pub &'a mut dyn OnBus);
-
-impl<'a> MMIOMapping<'a> {
-    pub fn new(range: Range<Word>, io: &'a mut dyn OnBus) -> Self {
-        MMIOMapping(MemRange(range), io)
-    }
-}
-
-impl<'a> PartialEq for MMIOMapping<'a> {
-    fn eq(&self, other: &Self) -> bool {
-        self.0 == other.0
-    }
-}
-
-impl<'a> Eq for MMIOMapping<'a> {}
-
-impl<'a> PartialOrd for MMIOMapping<'a> {
-    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        self.0.partial_cmp(&other.0)
-    }
-}
-
-impl<'a> Ord for MMIOMapping<'a> {
-    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        self.0.cmp(&other.0)
-    }
-}

@@ -20,13 +20,12 @@ fn generate_code(ast: &DeriveInput) -> proc_macro2::TokenStream {
     let tokens = quote! {
         use crate::sixty_five::{memory_bus::MemoryBus, cpu::Cpu};
         impl OpcodeDecoder for #ident {
-            fn decode_opcode(cpu: &mut Cpu, memory: &MemoryBus) -> Opcode {
+            fn decode_opcode(cpu: &mut Cpu, memory: &MemoryBus) -> anyhow::Result<Opcode> {
                 let opcode = cpu.fetch_byte(&memory);
                 match opcode {
                     #(#arms)*
                     // TODO: This should not panic
-                    _ => panic!("Unknown opcode")
-                }
+                    _ => Err(anyhow::anyhow!("Unknown opcode {opcode:#02x}")) }
             }
         }
     };
@@ -50,7 +49,7 @@ fn generate_arm(enum_ident: &Ident, var: &Variant) -> proc_macro2::TokenStream {
     let params = &var.fields;
     match params {
         Fields::Unit => quote! {
-            #opcode_value => #enum_ident::#ident,
+            #opcode_value => Ok(#enum_ident::#ident),
         },
         Fields::Named(_) => panic!("Named fields are unsupported in enums"),
         Fields::Unnamed(fields) => {
@@ -77,7 +76,7 @@ fn generate_arm(enum_ident: &Ident, var: &Variant) -> proc_macro2::TokenStream {
             quote! {
                 #opcode_value => {
                     #(#parts)*
-                    #enum_ident::#ident(#(#idents),*)
+                    Ok(#enum_ident::#ident(#(#idents),*))
                 },
             }
         }
