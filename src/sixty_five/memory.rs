@@ -3,7 +3,7 @@ use super::{
     memory_bus::{mmio_range::MemRange, BusRead, BusWrite},
 };
 
-const MEM_SIZE: usize = 1024;
+const MEM_SIZE: usize = 128;
 pub struct Memory {
     buffer: [Byte; MEM_SIZE],
 }
@@ -17,11 +17,11 @@ impl Memory {
 }
 
 const fn convert_addr(addr: Word) -> usize {
-    (0xFF & addr) as usize
+    (0xFF & addr) as usize - 0x80
 }
 
 impl BusRead for Memory {
-    fn read_byte(&self, addr: Word, range: &MemRange) -> Byte {
+    fn read_byte(&self, addr: Word, _range: &MemRange) -> Byte {
         let addr = convert_addr(addr);
         assert!(addr < MEM_SIZE);
 
@@ -30,7 +30,7 @@ impl BusRead for Memory {
 }
 
 impl BusWrite for Memory {
-    fn write_byte(&mut self, addr: Word, range: &MemRange, data: Byte) {
+    fn write_byte(&mut self, addr: Word, _range: &MemRange, data: Byte) {
         let addr = convert_addr(addr);
         assert!(addr < MEM_SIZE);
 

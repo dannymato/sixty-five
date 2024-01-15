@@ -6,6 +6,7 @@ use crate::sixty_five::data_types::Word;
 pub struct MemRange(pub Range<Word>);
 
 impl MemRange {
+    #[allow(dead_code)]
     pub fn compare_with_word(&self, word: &Word) -> std::cmp::Ordering {
         if word < &self.0.end {
             if word >= &self.0.start {
@@ -20,6 +21,7 @@ impl MemRange {
 }
 
 impl PartialOrd for MemRange {
+    #[allow(clippy::non_canonical_partial_ord_impl)]
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
         let self_range = &self.0;
         let other_range = &other.0;
@@ -42,4 +44,3 @@ impl Ord for MemRange {
         self.partial_cmp(other).unwrap()
     }
 }
-

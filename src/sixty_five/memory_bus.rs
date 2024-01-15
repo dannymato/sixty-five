@@ -7,6 +7,8 @@ use super::{
     memory::Memory,
 };
 
+use anyhow;
+
 pub mod mmio_range;
 
 pub trait BusRead {
@@ -64,20 +66,20 @@ impl<'a> MemoryBus<'a> {
         main_memory: &'a mut BusMember,
         null_bus: &'a mut BusMember,
         cartridge: &'a mut BusMember,
-    ) -> Self {
+    ) -> anyhow::Result<Self> {
         let BusMember::MainMemory(_) = main_memory else {
-            todo!("this should return a result");
+            return Err(anyhow::anyhow!("main_memory not Memory"));
         };
 
         let BusMember::Cartridge(_) = cartridge else {
-            todo!("cartridge not a cartridge")
+            return Err(anyhow::anyhow!("cartridge not a cartridge"));
         };
 
-        MemoryBus {
+        Ok(MemoryBus {
             main_memory,
             null_bus,
             cartridge,
-        }
+        })
     }
 
     pub fn write_to_zero_page(&mut self, addr: Word, data: Byte) {
@@ -119,7 +121,7 @@ impl<'a> MemoryBus<'a> {
             return func(&&*self.cartridge);
         }
 
-        return func(&&*self.null_bus);
+        func(&&*self.null_bus)
     }
 
     fn with_write_bus_member(&mut self, addr: Word, func: impl FnOnce(&mut &mut BusMember)) {
@@ -142,12 +144,11 @@ impl<'a> MemoryBus<'a> {
         }
 
         if is_bit_set(addr, 12) {
-            println!("BAD! writing {addr:#04x} to cartridge");
+            eprintln!("BAD! writing {addr:#04x} to cartridge");
             func(&mut self.null_bus);
             return;
         }
 
-        func(&mut self.null_bus);
-        return;
+        func(&mut self.null_bus)
     }
 }

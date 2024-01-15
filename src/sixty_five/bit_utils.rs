@@ -7,3 +7,9 @@ pub const fn is_bit_set(addr: Word, bit: Word) -> bool {
 pub const fn is_bit_unset(addr: Word, bit: Word) -> bool {
     !is_bit_set(addr, bit)
 }
+
+const UPPER_BYTE_MASK: Word = 0xFF00;
+
+pub const fn page_crossed(orig_addr: Word, new_addr: Word) -> bool {
+    (orig_addr & UPPER_BYTE_MASK) != (new_addr & UPPER_BYTE_MASK)
+}

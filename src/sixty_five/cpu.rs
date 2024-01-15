@@ -2,7 +2,7 @@ use anyhow;
 
 use self::code::Opcode;
 use super::{
-    bit_utils::is_bit_set,
+    bit_utils::{is_bit_set, page_crossed},
     data_types::{Byte, SignedWord, Word},
     memory_bus::MemoryBus,
 };
@@ -56,13 +56,12 @@ macro_rules! add_register {
     };
 }
 
-
 const fn has_overflow(a: Byte, b: Byte, out: Byte) -> bool {
     let a7 = is_bit_set(a as Word, 7);
     let b7 = is_bit_set(b as Word, 7);
     let out7 = is_bit_set(out as Word, 7);
 
-    if a7 && b7  {
+    if a7 && b7 {
         return !out7;
     }
 
@@ -154,6 +153,7 @@ impl<'a> Cpu<'a> {
             Opcode::AndAbsY(addr) => self.and_absolute_y(bus, addr),
             Opcode::JumpAbs(addr) => self.jump_abs(addr),
             Opcode::JumpInd(addr) => self.jump_ind(bus, addr),
+            Opcode::JumpSubroutine(addr) => self.jump_subroutine(bus, addr),
             Opcode::AndIndX(addr) => self.and_indirect_x(bus, addr),
             Opcode::AndIndY(addr) => self.and_indirect_y(bus, addr),
             Opcode::IncX => self.inc_x(),
@@ -173,6 +173,10 @@ impl<'a> Cpu<'a> {
             Opcode::CompYImm(value) => self.compare_y_imm(value),
             Opcode::InterruptDisable => {
                 self.interrupt_disable = true;
+                self.increment_clock(2);
+            }
+            Opcode::SetDecimalMode => {
+                self.decimal_mode = true;
                 self.increment_clock(2);
             }
             Opcode::ClearDecimalMode => {
@@ -261,18 +265,23 @@ impl<'a> Cpu<'a> {
         self.increment_clock(5);
     }
 
+    fn jump_subroutine(&mut self, bus: &mut MemoryBus, addr: Word) {
+        self.push_stack_word(bus, self.pc);
+        self.pc = addr;
+        self.increment_clock(6);
+    }
+
     fn add_immediate(&mut self, operand: Byte) {
         if self.decimal_mode {
-            todo!("Don't know about decimal mode");
+            println!("Don't know about decimal mode probably wrong stuff will happen");
         }
 
         add_register!(self, ra, operand);
     }
 
-
     fn add_carry_zero(&mut self, bus: &MemoryBus, addr: Byte) {
         if self.decimal_mode {
-            todo!("Don't know about decimal mode");
+            println!("Don't know about decimal mode");
         }
 
         let mut operand = bus.read_from_zero_page(addr as Word);
@@ -309,6 +318,19 @@ impl<'a> Cpu<'a> {
         let value = value & self.ra;
         load_register!(self, value, ra);
         self.increment_clock(4);
+    }
+
+    fn push_stack_byte(&mut self, bus: &mut MemoryBus, value: Byte) {
+        bus.write_to_zero_page((self.sp as Word) + 0x100, value);
+        self.sp = self.sp.wrapping_sub(1);
+    }
+
+    fn push_stack_word(&mut self, bus: &mut MemoryBus, value: Word) {
+        let lower = (0xFF & value) as Byte;
+        let upper = (0xFF00 & value >> 8) as Byte;
+
+        self.push_stack_byte(bus, upper);
+        self.push_stack_byte(bus, lower);
     }
 
     #[inline]
@@ -541,7 +563,7 @@ impl<'a> Cpu<'a> {
     }
 
     fn set_overflow(&mut self, byte: Byte) {
-        self.overflow = 0b01000000 & byte > 0;
+        self.overflow = is_bit_set(byte.into(), 7);
     }
 
     fn increment_clock(&mut self, cycles_used: u32) {
@@ -566,12 +588,6 @@ impl<'a> Cpu<'a> {
 
         upper_byte | ((self.fetch_byte(memory) as Word) << 8)
     }
-}
-
-const UPPER_BYTE_MASK: Word = 0xFF00;
-
-const fn page_crossed(orig_addr: Word, new_addr: Word) -> bool {
-    (orig_addr & UPPER_BYTE_MASK) != (new_addr & UPPER_BYTE_MASK)
 }
 
 impl Display for Cpu<'_> {
