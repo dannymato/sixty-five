@@ -45,13 +45,26 @@ macro_rules! load_register_zero_page_plus {
     };
 }
 
+macro_rules! sub_register {
+    ($self:ident, $register:ident, $operand:ident) => {
+        let original = $self.$register;
+        let value = $self.$register.wrapping_sub($operand);
+        $self.$register = value as Byte;
+        $self.negative = is_bit_set(value as Word, 7);
+        $self.zero = value == 0;
+        $self.overflow = has_overflow(original, $operand as Byte, value as Byte);
+        $self.carry = $self.overflow;
+    };
+}
+
 macro_rules! add_register {
     ($self:ident, $register:ident, $operand:ident) => {
         let original = $self.$register;
         let value = $self.$register + $operand;
+        $self.$register = value as Byte;
         $self.negative = is_bit_set(value as Word, 7);
         $self.zero = value == 0;
-        $self.overflow = has_overflow(original, $operand, value);
+        $self.overflow = has_overflow(original, $operand as Byte, value as Byte);
         $self.carry = $self.overflow;
     };
 }
@@ -145,6 +158,7 @@ impl<'a> Cpu<'a> {
             Opcode::MoveYA => self.move_y_a(),
             Opcode::AddImmediate(value) => self.add_immediate(value),
             Opcode::AddCarryZero(addr) => self.add_carry_zero(bus, addr),
+            Opcode::SubCarryImmediate(value) => self.sub_carry_imm(value),
             Opcode::AndImm(value) => self.and_immediate(value),
             Opcode::AndZero(addr) => self.and_zero(bus, addr),
             Opcode::AndZeroX(addr) => self.and_zero_x(bus, addr),
@@ -154,6 +168,9 @@ impl<'a> Cpu<'a> {
             Opcode::JumpAbs(addr) => self.jump_abs(addr),
             Opcode::JumpInd(addr) => self.jump_ind(bus, addr),
             Opcode::JumpSubroutine(addr) => self.jump_subroutine(bus, addr),
+            Opcode::LogRShiftAcc => self.logical_right_shift_acc(),
+            Opcode::LogRShiftAbs(addr) => self.logical_right_shift_absolute(bus, addr),
+            Opcode::RetSubroutine => self.return_subroutine(bus),
             Opcode::AndIndX(addr) => self.and_indirect_x(bus, addr),
             Opcode::AndIndY(addr) => self.and_indirect_y(bus, addr),
             Opcode::IncX => self.inc_x(),
@@ -187,7 +204,10 @@ impl<'a> Cpu<'a> {
                 self.carry = false;
                 self.increment_clock(2);
             }
-            Opcode::Break => self.break_command = true,
+            Opcode::Break => {
+                self.break_command = true;
+                self.increment_clock(7);
+            }
         }
     }
 
@@ -216,6 +236,8 @@ impl<'a> Cpu<'a> {
             self.increment_clock(2);
             return;
         }
+
+        println!("JUMPING!");
 
         let current_pc = self.pc;
         let new_value = (self.pc as SignedWord) + (addr as SignedWord);
@@ -254,11 +276,13 @@ impl<'a> Cpu<'a> {
     }
 
     fn jump_abs(&mut self, addr: Word) {
+        println!("JUMPING");
         self.pc = addr;
         self.increment_clock(3);
     }
 
     fn jump_ind(&mut self, bus: &MemoryBus, addr: Word) {
+        println!("JUMPING");
         self.pc = addr;
         let addr = self.fetch_word(bus);
         self.pc = addr;
@@ -266,9 +290,17 @@ impl<'a> Cpu<'a> {
     }
 
     fn jump_subroutine(&mut self, bus: &mut MemoryBus, addr: Word) {
-        self.push_stack_word(bus, self.pc);
+        println!("JUMPING from {:#04x}", self.pc);
+        self.push_stack_word(bus, self.pc + 1);
         self.pc = addr;
         self.increment_clock(6);
+    }
+
+    fn return_subroutine(&mut self, bus: &MemoryBus) {
+        let addr = self.pop_stack_word(bus);
+        self.pc = addr;
+        println!("RETURNING to {:#04x}", self.pc);
+        self.increment_clock(7);
     }
 
     fn add_immediate(&mut self, operand: Byte) {
@@ -277,6 +309,7 @@ impl<'a> Cpu<'a> {
         }
 
         add_register!(self, ra, operand);
+        self.increment_clock(2);
     }
 
     fn add_carry_zero(&mut self, bus: &MemoryBus, addr: Byte) {
@@ -291,6 +324,21 @@ impl<'a> Cpu<'a> {
         }
 
         add_register!(self, ra, operand);
+        self.increment_clock(3);
+    }
+
+    fn sub_carry_imm(&mut self, value: Byte) {
+        if self.decimal_mode {
+            println!("Don't know about decimal mode");
+        }
+
+        let mut operand = value;
+        if !self.carry {
+            operand = operand.wrapping_add(1);
+        }
+
+        sub_register!(self, ra, operand);
+        self.increment_clock(2);
     }
 
     fn and_immediate(&mut self, value: Byte) {
@@ -320,8 +368,46 @@ impl<'a> Cpu<'a> {
         self.increment_clock(4);
     }
 
+    fn logical_right_shift_acc(&mut self) {
+        let original = self.ra;
+        let value = self.ra.wrapping_shr(1);
+        self.ra = value;
+
+        self.carry = is_bit_set(original as Word, 0);
+        self.zero = value == 0;
+        self.negative = is_bit_set(value as Word, 7);
+
+        self.increment_clock(2);
+    }
+
+    fn logical_right_shift_absolute(&mut self, bus: &mut MemoryBus, addr: Word) {
+        let original = bus.read_byte(addr);
+        let value = original.wrapping_shr(1);
+        bus.write_byte(addr, value);
+
+        self.carry = is_bit_set(original as Word, 0);
+        self.zero = value == 0;
+        self.negative = is_bit_set(value as Word, 7);
+
+        self.increment_clock(6);
+    }
+
+    fn pop_stack_byte(&mut self, bus: &MemoryBus) -> Byte {
+        println!("POPPING");
+        self.sp = self.sp.wrapping_add(1);
+        bus.read_byte((self.sp as Word) + 0x100)
+    }
+
+    fn pop_stack_word(&mut self, bus: &MemoryBus) -> Word {
+        let lower = self.pop_stack_byte(bus);
+        let upper = self.pop_stack_byte(bus);
+
+        ((upper as Word) << 8) | lower as Word
+    }
+
     fn push_stack_byte(&mut self, bus: &mut MemoryBus, value: Byte) {
-        bus.write_to_zero_page((self.sp as Word) + 0x100, value);
+        println!("PUSHING");
+        bus.write_byte((self.sp as Word) + 0x100, value);
         self.sp = self.sp.wrapping_sub(1);
     }
 

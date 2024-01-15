@@ -17,7 +17,7 @@ impl Memory {
 }
 
 const fn convert_addr(addr: Word) -> usize {
-    (0xFF & addr) as usize - 0x80
+    (0xFF & (addr - 0x80)) as usize
 }
 
 impl BusRead for Memory {
