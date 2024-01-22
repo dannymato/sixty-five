@@ -1,18 +1,17 @@
 use anyhow;
 use std::{fs::read, path::Path};
 
-use super::memory_bus::{BusRead, BusWrite};
+use super::{
+    data_types::{Byte, Word},
+    memory_bus::{BusRead, BusWrite},
+};
 
 pub struct FourKCart {
     bytes: Vec<u8>,
 }
 
 impl BusRead for FourKCart {
-    fn read_byte(
-        &self,
-        addr: super::data_types::Word,
-        _mapping_range: &super::memory_bus::mmio_range::MemRange,
-    ) -> super::data_types::Byte {
+    fn read_byte(&self, addr: super::data_types::Word) -> super::data_types::Byte {
         self.bytes[(addr & 0x0FFF) as usize]
     }
 }
@@ -24,11 +23,10 @@ pub enum Cartridge {
 impl BusRead for Cartridge {
     fn read_byte(
         &self,
-        addr: super::data_types::Word,
-        mapping_range: &super::memory_bus::mmio_range::MemRange,
+        addr: Word,
     ) -> super::data_types::Byte {
         match self {
-            Self::FourK(f) => f.read_byte(addr, mapping_range),
+            Self::FourK(f) => f.read_byte(addr),
         }
     }
 }
@@ -36,10 +34,10 @@ impl BusRead for Cartridge {
 impl BusWrite for Cartridge {
     fn write_byte(
         &mut self,
-        _addr: super::data_types::Word,
-        _mapping_range: &super::memory_bus::mmio_range::MemRange,
-        _data: super::data_types::Byte,
+        _addr: Word,
+        _data: Byte,
     ) {
+        eprintln!("BAD: Should not be writing to the cartridge");
     }
 }
 

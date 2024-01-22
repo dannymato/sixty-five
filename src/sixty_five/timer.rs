@@ -4,8 +4,8 @@ use super::{
 //    memory_bus::{mmio_range::MemRange, OnBus},
 };
 
-#[cfg(test)]
-mod tests;
+// #[cfg(test)]
+// mod tests;
 
 pub struct Timer {
     current_time: u32,

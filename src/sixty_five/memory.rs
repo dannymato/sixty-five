@@ -1,7 +1,10 @@
 use super::{
     data_types::{Byte, Word},
-    memory_bus::{mmio_range::MemRange, BusRead, BusWrite},
+    memory_bus::{BusRead, BusWrite},
 };
+
+#[cfg(test)]
+mod tests;
 
 const MEM_SIZE: usize = 128;
 pub struct Memory {
@@ -21,7 +24,7 @@ const fn convert_addr(addr: Word) -> usize {
 }
 
 impl BusRead for Memory {
-    fn read_byte(&self, addr: Word, _range: &MemRange) -> Byte {
+    fn read_byte(&self, addr: Word) -> Byte {
         let addr = convert_addr(addr);
         assert!(addr < MEM_SIZE);
 
@@ -30,7 +33,7 @@ impl BusRead for Memory {
 }
 
 impl BusWrite for Memory {
-    fn write_byte(&mut self, addr: Word, _range: &MemRange, data: Byte) {
+    fn write_byte(&mut self, addr: Word, data: Byte) {
         let addr = convert_addr(addr);
         assert!(addr < MEM_SIZE);
 
@@ -39,13 +42,13 @@ impl BusWrite for Memory {
 }
 
 impl BusRead for &Memory {
-    fn read_byte(&self, addr: Word, mapping_range: &MemRange) -> Byte {
-        (*self).read_byte(addr, mapping_range)
+    fn read_byte(&self, addr: Word) -> Byte {
+        (*self).read_byte(addr)
     }
 }
 
 impl BusWrite for &mut Memory {
-    fn write_byte(&mut self, addr: Word, mapping_range: &MemRange, data: Byte) {
-        (*self).write_byte(addr, mapping_range, data)
+    fn write_byte(&mut self, addr: Word, data: Byte) {
+        (*self).write_byte(addr, data)
     }
 }

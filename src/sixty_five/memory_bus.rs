@@ -1,5 +1,3 @@
-use self::mmio_range::MemRange;
-
 use super::{
     bit_utils::{is_bit_set, is_bit_unset},
     cartridge::Cartridge,
@@ -12,10 +10,10 @@ use anyhow;
 pub mod mmio_range;
 
 pub trait BusRead {
-    fn read_byte(&self, addr: Word, mapping_range: &MemRange) -> Byte;
+    fn read_byte(&self, addr: Word) -> Byte;
 }
 pub trait BusWrite {
-    fn write_byte(&mut self, addr: Word, mapping_range: &MemRange, data: Byte);
+    fn write_byte(&mut self, addr: Word, data: Byte);
 }
 
 pub enum BusMember {
@@ -25,21 +23,21 @@ pub enum BusMember {
 }
 
 impl BusWrite for &mut BusMember {
-    fn write_byte(&mut self, addr: Word, mapping_range: &MemRange, data: Byte) {
+    fn write_byte(&mut self, addr: Word, data: Byte) {
         match self {
-            BusMember::Null(null) => null.write_byte(addr, mapping_range, data),
-            BusMember::MainMemory(mem) => mem.write_byte(addr, mapping_range, data),
-            BusMember::Cartridge(cart) => cart.write_byte(addr, mapping_range, data),
+            BusMember::Null(null) => null.write_byte(addr, data),
+            BusMember::MainMemory(mem) => mem.write_byte(addr, data),
+            BusMember::Cartridge(cart) => cart.write_byte(addr, data),
         }
     }
 }
 
 impl BusRead for &BusMember {
-    fn read_byte(&self, addr: Word, mapping_range: &MemRange) -> Byte {
+    fn read_byte(&self, addr: Word) -> Byte {
         match self {
-            BusMember::Null(null) => null.read_byte(addr, mapping_range),
-            BusMember::MainMemory(mem) => mem.read_byte(addr, mapping_range),
-            BusMember::Cartridge(cart) => cart.read_byte(addr, mapping_range),
+            BusMember::Null(null) => null.read_byte(addr),
+            BusMember::MainMemory(mem) => mem.read_byte(addr),
+            BusMember::Cartridge(cart) => cart.read_byte(addr),
         }
     }
 }
@@ -52,13 +50,13 @@ pub struct MemoryBus<'a> {
 
 pub struct NullBus {}
 impl BusRead for NullBus {
-    fn read_byte(&self, _addr: Word, _mapping_range: &MemRange) -> Byte {
+    fn read_byte(&self, _addr: Word) -> Byte {
         0
     }
 }
 
 impl BusWrite for NullBus {
-    fn write_byte(&mut self, _addr: Word, _mapping_range: &MemRange, _data: Byte) {}
+    fn write_byte(&mut self, _addr: Word, _data: Byte) {}
 }
 
 impl<'a> MemoryBus<'a> {
@@ -88,12 +86,12 @@ impl<'a> MemoryBus<'a> {
 
     pub fn write_byte(&mut self, addr: Word, data: Byte) {
         self.with_write_bus_member(addr, |member| {
-            member.write_byte(addr, &MemRange::default(), data)
+            member.write_byte(addr, data)
         });
     }
 
     pub fn read_byte(&self, addr: Word) -> Byte {
-        self.with_read_bus_member(addr, |member| member.read_byte(addr, &MemRange::default()))
+        self.with_read_bus_member(addr, |member| member.read_byte(addr))
     }
 
     pub fn read_from_zero_page(&self, addr: Word) -> Byte {

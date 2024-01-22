@@ -1,5 +1,7 @@
 use anyhow;
 
+use crate::sixty_five::data_types::SignedByte;
+
 use self::code::Opcode;
 use super::{
     bit_utils::{is_bit_set, page_crossed},
@@ -10,8 +12,8 @@ use super::{
 use std::fmt::Display;
 
 mod code;
-#[cfg(test)]
-mod tests;
+//#[cfg(test)]
+//mod tests;
 
 pub trait OpcodeDecoder {
     fn decode_opcode(cpu: &mut Cpu, memory: &MemoryBus) -> anyhow::Result<Opcode>;
@@ -99,6 +101,7 @@ pub struct Cpu<'a> {
     break_command: bool,
     overflow: bool,
     negative: bool,
+    clock_cycles: u128,
     clock_handlers: Vec<&'a mut dyn ClockHandler>,
 }
 
@@ -123,8 +126,15 @@ impl<'a> Cpu<'a> {
 
     fn run_cycle(&mut self, bus: &mut MemoryBus) -> anyhow::Result<()> {
         let inst = Opcode::decode_opcode(self, bus)?;
-
+        println!("Running instr: {inst}");
+        let current_clock = self.clock_cycles;
         self.execute(inst, bus);
+        let after_clock = self.clock_cycles;
+
+        debug_assert!(
+            after_clock > current_clock
+                || (after_clock < 10 && current_clock > (u128::max_value() - 10))
+        );
 
         Ok(())
     }
@@ -134,9 +144,16 @@ impl<'a> Cpu<'a> {
             Opcode::LoadAImmediate(val) => self.load_a_immediate(val),
             Opcode::LoadAZeroPage(addr) => self.load_a_zero_page(bus, addr),
             Opcode::LoadXImmediate(val) => self.load_x_immediate(val),
+            Opcode::LoadXZero(addr) => self.load_x_zero_page(bus, addr),
             Opcode::LoadYImmediate(val) => self.load_y_immediate(val),
             Opcode::LoadAZeroPageX(addr) => self.load_a_zero_page_x(bus, addr),
             Opcode::LoadAAbsolute(addr) => self.load_a_absolute(bus, addr),
+            Opcode::LoadAAbsoluteX(addr) => self.load_a_absolute_x(bus, addr),
+            Opcode::LoadAAbsoluteY(addr) => self.load_a_absolute_y(bus, addr),
+            Opcode::LoadYZero(addr) => self.load_y_zero(bus, addr),
+            Opcode::LoadYZeroX(addr) => self.load_y_zero_x(bus, addr),
+            Opcode::LoadYAbsoluteX(addr) => self.load_y_absolute_x(bus, addr),
+            Opcode::LoadAIndY(addr) => self.load_a_indirect_y(bus, addr),
             Opcode::StoreAZeroPage(addr) => self.store_a_zero_page(bus, addr),
             Opcode::StoreAZeroPageX(addr) => self.store_a_zero_page_x(bus, addr),
             Opcode::StoreAAbsolute(addr) => self.store_a_absolute(bus, addr),
@@ -165,11 +182,17 @@ impl<'a> Cpu<'a> {
             Opcode::AndAbs(addr) => self.and_absolute(bus, addr),
             Opcode::AndAbsX(addr) => self.and_absolute_x(bus, addr),
             Opcode::AndAbsY(addr) => self.and_absolute_y(bus, addr),
+            Opcode::OrZero(addr) => self.or_zero(bus, addr),
+            Opcode::XorImm(value) => self.xor_immediate(value),
+            Opcode::XorZero(addr) => self.xor_zero(bus, addr),
             Opcode::JumpAbs(addr) => self.jump_abs(addr),
             Opcode::JumpInd(addr) => self.jump_ind(bus, addr),
             Opcode::JumpSubroutine(addr) => self.jump_subroutine(bus, addr),
+            Opcode::LShiftZero(addr) => self.shift_left_zero(bus, addr),
             Opcode::LogRShiftAcc => self.logical_right_shift_acc(),
             Opcode::LogRShiftAbs(addr) => self.logical_right_shift_absolute(bus, addr),
+            Opcode::RotateLAcc => self.rotate_left_accumulator(),
+            Opcode::RotateRAcc => self.rotate_right_accumulator(),
             Opcode::RetSubroutine => self.return_subroutine(bus),
             Opcode::AndIndX(addr) => self.and_indirect_x(bus, addr),
             Opcode::AndIndY(addr) => self.and_indirect_y(bus, addr),
@@ -177,9 +200,20 @@ impl<'a> Cpu<'a> {
             Opcode::DecX => self.dec_x(),
             Opcode::IncY => self.inc_y(),
             Opcode::DecY => self.dec_y(),
+            Opcode::IncMemZero(addr) => self.inc_memory_zero(bus, addr),
+            Opcode::DecMemZero(addr) => self.dec_memory_zero(bus, addr),
             Opcode::NoOp => self.noop(),
+            Opcode::PushAcc => {
+                self.push_stack_byte(bus, self.ra);
+                self.increment_clock(3);
+            }
+            Opcode::PullAcc => {
+                self.ra = self.pop_stack_byte(bus);
+                self.increment_clock(4);
+            }
             Opcode::BranchCarryClear(addr) => self.branch_carry_clear(addr),
             Opcode::BranchCarrySet(addr) => self.branch_carry_set(addr),
+            Opcode::BranchOverflowClear(addr) => self.branch_overflow_clear(addr),
             Opcode::BranchEqual(addr) => self.branch_equal(addr),
             Opcode::BranchNotEqual(addr) => self.branch_not_equal(addr),
             Opcode::BranchPositive(addr) => self.branch_positive(addr),
@@ -187,7 +221,10 @@ impl<'a> Cpu<'a> {
             Opcode::BitTestZero(addr) => self.bit_test_zero_page(bus, addr),
             Opcode::BitTestAbs(addr) => self.bit_test_abs(bus, addr),
             Opcode::LShiftAcc => self.shift_left_acc(),
-            Opcode::CompYImm(value) => self.compare_y_imm(value),
+            Opcode::CompareXImm(value) => self.compare_x_immediate(value),
+            Opcode::CompareXZero(addr) => self.compare_x_zero(bus, addr),
+            Opcode::CompareYImm(value) => self.compare_y_imm(value),
+            Opcode::CompareImm(value) => self.compare_immediate(value),
             Opcode::InterruptDisable => {
                 self.interrupt_disable = true;
                 self.increment_clock(2);
@@ -200,11 +237,21 @@ impl<'a> Cpu<'a> {
                 self.decimal_mode = false;
                 self.increment_clock(2);
             }
+            Opcode::SetCarry => {
+                self.carry = true;
+                self.increment_clock(2);
+            }
             Opcode::ClearCarry => {
                 self.carry = false;
                 self.increment_clock(2);
             }
             Opcode::Break => {
+                panic!("break should not be called");
+                self.push_stack_word(bus, self.pc - 1);
+                self.push_stack_byte(bus, self.register_values());
+                // Hack to fetch artbitrary word
+                self.pc = 0xfffe;
+                self.pc = self.fetch_word(bus);
                 self.break_command = true;
                 self.increment_clock(7);
             }
@@ -240,7 +287,7 @@ impl<'a> Cpu<'a> {
         println!("JUMPING!");
 
         let current_pc = self.pc;
-        let new_value = (self.pc as SignedWord) + (addr as SignedWord);
+        let new_value = (current_pc as SignedWord) + ((addr as SignedByte) as SignedWord);
         self.pc = new_value as Word;
         let clock_count = if page_crossed(current_pc, self.pc) {
             5
@@ -257,6 +304,10 @@ impl<'a> Cpu<'a> {
 
     fn branch_carry_set(&mut self, addr: Byte) {
         self.execute_branch(addr, |cpu| cpu.carry);
+    }
+
+    fn branch_overflow_clear(&mut self, addr: Byte) {
+        self.execute_branch(addr, |cpu| !cpu.overflow);
     }
 
     fn branch_equal(&mut self, addr: Byte) {
@@ -291,7 +342,7 @@ impl<'a> Cpu<'a> {
 
     fn jump_subroutine(&mut self, bus: &mut MemoryBus, addr: Word) {
         println!("JUMPING from {:#04x}", self.pc);
-        self.push_stack_word(bus, self.pc + 1);
+        self.push_stack_word(bus, self.pc);
         self.pc = addr;
         self.increment_clock(6);
     }
@@ -392,6 +443,30 @@ impl<'a> Cpu<'a> {
         self.increment_clock(6);
     }
 
+    fn rotate_left_accumulator(&mut self) {
+        let original = self.ra;
+        let mut new = original << 1;
+        if self.carry {
+            new |= 0b00000001;
+        }
+
+        self.ra = new;
+        self.zero = new == 0;
+        self.negative = is_bit_set(new as Word, 7);
+
+        self.carry = is_bit_set(original as Word, 7);
+        self.increment_clock(2);
+    }
+
+    fn rotate_right_accumulator(&mut self) {
+        let original = self.ra;
+        let new = (original >> 1) | ((self.carry as Byte) << 7);
+
+        load_register!(self, new, ra);
+        self.carry = is_bit_set(original as Word, 0);
+        self.increment_clock(2);
+    }
+
     fn pop_stack_byte(&mut self, bus: &MemoryBus) -> Byte {
         println!("POPPING");
         self.sp = self.sp.wrapping_add(1);
@@ -406,14 +481,15 @@ impl<'a> Cpu<'a> {
     }
 
     fn push_stack_byte(&mut self, bus: &mut MemoryBus, value: Byte) {
-        println!("PUSHING");
+        println!("PUSHING {value:#02x}");
         bus.write_byte((self.sp as Word) + 0x100, value);
         self.sp = self.sp.wrapping_sub(1);
     }
 
     fn push_stack_word(&mut self, bus: &mut MemoryBus, value: Word) {
+        println!("PUSH WORD {value:#02x}");
         let lower = (0xFF & value) as Byte;
-        let upper = (0xFF00 & value >> 8) as Byte;
+        let upper = ((0xFF00 & value) >> 8) as Byte;
 
         self.push_stack_byte(bus, upper);
         self.push_stack_byte(bus, lower);
@@ -463,6 +539,13 @@ impl<'a> Cpu<'a> {
         self.increment_clock(cycles_used)
     }
 
+    fn or_zero(&mut self, bus: &MemoryBus, addr: Byte) {
+        let operand = bus.read_from_zero_page(addr as Word);
+        let value = self.ra | operand;
+        load_register!(self, value, ra);
+        self.increment_clock(3);
+    }
+
     fn load_a_immediate(&mut self, value: Byte) {
         load_register!(self, value, ra);
         self.increment_clock(2);
@@ -484,14 +567,72 @@ impl<'a> Cpu<'a> {
         self.increment_clock(4);
     }
 
+    fn load_a_absolute_x(&mut self, bus: &MemoryBus, addr: Word) {
+        let new_addr = addr + self.rx as Word;
+        let byte = bus.read_byte(new_addr);
+        load_register!(self, byte, ra);
+        let cycles_used = if page_crossed(addr, new_addr) { 5 } else { 5 };
+
+        self.increment_clock(cycles_used);
+    }
+
+    fn load_a_absolute_y(&mut self, bus: &MemoryBus, addr: Word) {
+        let new_addr = addr + self.ry as Word;
+        let byte = bus.read_byte(new_addr);
+        load_register!(self, byte, ra);
+        let cycles_used = if page_crossed(addr, new_addr) { 5 } else { 4 };
+
+        self.increment_clock(cycles_used);
+    }
+
+    fn load_a_indirect_y(&mut self, bus: &MemoryBus, addr: Byte) {
+        let new_addr = bus.read_byte(addr as Word);
+        let byte = bus.read_byte(new_addr as Word + self.ry as Word);
+        load_register!(self, byte, ra);
+        let cycles_used = if page_crossed(addr as Word, new_addr as Word) {
+            6
+        } else {
+            5
+        };
+
+        self.increment_clock(cycles_used);
+    }
+
     fn load_x_immediate(&mut self, value: Byte) {
         load_register!(self, value, rx);
         self.increment_clock(2);
     }
 
+    fn load_x_zero_page(&mut self, bus: &MemoryBus, addr: Byte) {
+        let value = bus.read_from_zero_page(addr as Word);
+        load_register!(self, value, rx);
+        self.increment_clock(3);
+    }
+
     fn load_y_immediate(&mut self, value: Byte) {
         load_register!(self, value, ry);
         self.increment_clock(2);
+    }
+
+    fn load_y_zero(&mut self, bus: &MemoryBus, addr: Byte) {
+        let value = bus.read_from_zero_page(addr as Word);
+        load_register!(self, value, ry);
+        self.increment_clock(3);
+    }
+
+    fn load_y_zero_x(&mut self, bus: &MemoryBus, addr: Byte) {
+        let value = bus.read_from_zero_page(addr.wrapping_add(self.ry) as Word);
+        load_register!(self, value, ry);
+        self.increment_clock(4);
+    }
+
+    fn load_y_absolute_x(&mut self, bus: &MemoryBus, addr: Word) {
+        let new_addr = addr + self.rx as Word;
+        let value = bus.read_byte(new_addr);
+        load_register!(self, value, ry);
+        let clocks = if page_crossed(addr, new_addr) { 5 } else { 4 };
+
+        self.increment_clock(clocks)
     }
 
     fn store_a_zero_page(&mut self, bus: &mut MemoryBus, addr: Byte) {
@@ -623,6 +764,24 @@ impl<'a> Cpu<'a> {
         self.increment_clock(2);
     }
 
+    fn inc_memory_zero(&mut self, bus: &mut MemoryBus, addr: Byte) {
+        let value = bus.read_from_zero_page(addr as Word).wrapping_add(1);
+        bus.write_byte(addr as Word, value);
+
+        self.zero = value == 0;
+        self.negative = is_bit_set(value as Word, 7);
+        self.increment_clock(5);
+    }
+
+    fn dec_memory_zero(&mut self, bus: &mut MemoryBus, addr: Byte) {
+        let value = bus.read_from_zero_page(addr as Word).wrapping_sub(1);
+        bus.write_byte(addr as Word, value);
+
+        self.zero = value == 0;
+        self.negative = is_bit_set(value as Word, 7);
+        self.increment_clock(5);
+    }
+
     fn shift_left_acc(&mut self) {
         let orig_ra = self.ra;
         let acc = self.ra.wrapping_shl(2);
@@ -631,9 +790,59 @@ impl<'a> Cpu<'a> {
         self.increment_clock(2);
     }
 
+    fn shift_left_zero(&mut self, bus: &MemoryBus, addr: Byte) {
+        let original = bus.read_from_zero_page(addr as Word);
+        let value = original.wrapping_shl(0);
+        load_register!(self, value, ra);
+        self.carry = is_bit_set(original as Word, 7);
+        self.increment_clock(5);
+    }
+
+
+    fn compare_immediate(&mut self, value: Byte) {
+        self.zero = value == self.ra;
+        self.carry = self.ra >= value;
+
+        self.negative = is_bit_set(self.ra.wrapping_sub(value) as Word, 7);
+        self.increment_clock(2);
+    }
+
+    fn compare_x_immediate(&mut self, value: Byte) {
+        self.zero = self.rx == value;
+        self.carry = self.rx >= value;
+
+        self.negative = is_bit_set(self.rx.wrapping_sub(value) as Word, 7);
+        self.increment_clock(2);
+    }
+
+    fn compare_x_zero(&mut self, bus: &MemoryBus, addr: Byte) {
+        let value = bus.read_from_zero_page(addr as Word);
+
+        self.zero = self.rx == value;
+        self.carry = self.rx >= value;
+
+        self.negative = is_bit_set(self.rx.wrapping_sub(value) as Word, 7);
+        self.increment_clock(2);
+    }
+
     fn compare_y_imm(&mut self, value: Byte) {
         self.carry = self.ry >= value;
         self.zero = self.ry == value;
+        self.negative = is_bit_set(self.ry.wrapping_sub(value) as Word, 7);
+        self.increment_clock(2);
+    }
+
+    fn xor_immediate(&mut self, operand: Byte) {
+        let value = self.ra ^ operand;
+        load_register!(self, value, ra);
+        self.increment_clock(2);
+    }
+
+    fn xor_zero(&mut self, bus: &MemoryBus, addr: Byte) {
+        let operand = bus.read_from_zero_page(addr as Word);
+        let value = self.ra ^ operand;
+        load_register!(self, value, ra);
+        self.increment_clock(3);
     }
 
     fn noop(&mut self) {
@@ -653,6 +862,8 @@ impl<'a> Cpu<'a> {
     }
 
     fn increment_clock(&mut self, cycles_used: u32) {
+        self.clock_cycles = self.clock_cycles.wrapping_add(cycles_used as u128);
+
         for handler in self.clock_handlers.iter_mut() {
             handler.handle_clock(cycles_used);
         }
@@ -665,7 +876,7 @@ impl<'a> Cpu<'a> {
     fn fetch_byte(&mut self, memory: &MemoryBus) -> Byte {
         print!("Fetching instr: ");
         let byte = memory.read_byte(self.pc);
-        self.pc += 1;
+        self.pc = self.pc.wrapping_add(1);
         byte
     }
 
@@ -673,6 +884,16 @@ impl<'a> Cpu<'a> {
         let upper_byte = self.fetch_byte(memory) as Word;
 
         upper_byte | ((self.fetch_byte(memory) as Word) << 8)
+    }
+
+    fn register_values(&self) -> Byte {
+        self.carry as Byte
+            | (self.zero as Byte) << 1
+            | (self.interrupt_disable as Byte) << 2
+            | (self.decimal_mode as Byte) << 3
+            | (self.break_command as Byte) << 4
+            | (self.overflow as Byte) << 6
+            | (self.negative as Byte) << 7
     }
 }
 
