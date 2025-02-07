@@ -18,10 +18,9 @@ fn generate_code(ast: &DeriveInput) -> proc_macro2::TokenStream {
         .iter()
         .map(|var| generate_arm(ident, var));
     let tokens = quote! {
-        use crate::sixty_five::{memory_bus::MemoryBus, cpu::Cpu};
         impl OpcodeDecoder for #ident {
-            fn decode_opcode(cpu: &mut Cpu, memory: &MemoryBus) -> anyhow::Result<Opcode> {
-                let opcode = cpu.fetch_byte(&memory);
+            fn decode_opcode(cpu: &mut crate::sixty_five::cpu::Cpu, memory: &mut impl crate::sixty_five::memory_bus::MemoryBus) -> anyhow::Result<Opcode> {
+                let opcode = cpu.fetch_byte(memory);
                 match opcode {
                     #(#arms)*
                     // TODO: This should not panic

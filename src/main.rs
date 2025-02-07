@@ -1,3 +1,5 @@
+#![feature(custom_test_frameworks)]
+#![test_runner(datatest::runner)]
 use std::env;
 
 use anyhow::anyhow;
@@ -5,7 +7,7 @@ use sixty_five::{cartridge::Cartridge, cpu::ClockHandler, memory::Memory, memory
 
 use crate::sixty_five::{
     cpu::Cpu,
-    memory_bus::{BusMember, MemoryBus},
+    memory_bus::{BusMember, AtariMemoryBus},
     timer::Timer,
 };
 
@@ -28,8 +30,7 @@ fn main() -> anyhow::Result<()> {
         return Err(anyhow::anyhow!("Did not pass path to cart"));
     }
 
-    let cart_path = args.last()
-        .ok_or_else(|| anyhow!("Cart path invalid"))?;
+    let cart_path = args.last().ok_or_else(|| anyhow!("Cart path invalid"))?;
 
     let cartidge = Cartridge::new(cart_path)?;
 
@@ -37,7 +38,7 @@ fn main() -> anyhow::Result<()> {
     let mut memory = BusMember::MainMemory(memory);
     let mut null_bus = BusMember::Null(NullBus {});
     let mut cartridge = BusMember::Cartridge(cartidge);
-    let mut memory_bus = MemoryBus::new(&mut memory, &mut null_bus, &mut cartridge)?;
+    let mut memory_bus = AtariMemoryBus::new(&mut memory, &mut null_bus, &mut cartridge)?;
 
     let mut timer = Timer::new();
 
@@ -47,10 +48,8 @@ fn main() -> anyhow::Result<()> {
     cpu.register_clock_handler(&mut clock_counter);
 
     cpu.init();
-    cpu.start(&mut memory_bus).map_err(|err| {
+    cpu.start(&mut memory_bus).inspect_err(|_err| {
         eprintln!("Error occurred clocks completed: {}", clock_counter.count);
-
-        err
     })?;
 
     Ok(())

@@ -1,5 +1,4 @@
 use super::Timer;
-use crate::sixty_five::memory_bus::{mmio_range::MemRange, OnBus};
 
 macro_rules! test_reset {
     ($test_name:ident, $interval:literal) => {
@@ -8,7 +7,7 @@ macro_rules! test_reset {
             let mut timer = Timer::new();
             timer.reset($interval);
 
-            let timer_value = timer.read_byte(0x284, &MemRange(0..1));
+            let timer_value = timer.read_byte(0x284);
 
             assert_eq!(timer_value, 0xff);
         }

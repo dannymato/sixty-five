@@ -7,8 +7,6 @@ use super::{
 
 use anyhow;
 
-pub mod mmio_range;
-
 pub trait BusRead {
     fn read_byte(&self, addr: Word) -> Byte;
 }
@@ -42,7 +40,7 @@ impl BusRead for &BusMember {
     }
 }
 
-pub struct MemoryBus<'a> {
+pub struct AtariMemoryBus<'a> {
     main_memory: &'a mut BusMember,
     null_bus: &'a mut BusMember,
     cartridge: &'a mut BusMember,
@@ -59,7 +57,54 @@ impl BusWrite for NullBus {
     fn write_byte(&mut self, _addr: Word, _data: Byte) {}
 }
 
-impl<'a> MemoryBus<'a> {
+pub trait MemoryBus {
+    fn read_byte(&self, addr: Word) -> Byte;
+    fn write_byte(&mut self, addr: Word, data: Byte);
+
+    fn write_to_zero_page(&mut self, addr: Word, data: Byte) {
+        self.write_byte(addr & 0x00FF, data)
+    }
+
+    fn read_from_zero_page(&self, addr: Word) -> Byte {
+        self.read_byte(addr & 0x00FF)
+    }
+
+    fn read_word_zero_page(&self, addr: Word) -> Word {
+        let lower = self.read_from_zero_page(addr) as Word;
+
+        lower | (self.read_from_zero_page(addr.wrapping_add(1)) as Word) << 8
+    }
+
+    fn read_word_abs(&self, addr: Word) -> Word {
+        let lower = self.read_byte(addr) as Word;
+        let lower_address = addr as Byte;
+        let lower_address = lower_address.wrapping_add(1);
+        // 6502 will not do this correctly and will only increment the lower byte
+        lower | (self.read_byte((addr & 0xFF00) | lower_address as Word) as Word) << 8
+    }
+}
+
+impl<T: MemoryBus> MemoryBus for &mut T {
+    fn read_byte(&self, addr: Word) -> Byte {
+        MemoryBus::read_byte(&**self, addr)
+    }
+
+    fn write_byte(&mut self, addr: Word, data: Byte) {
+        MemoryBus::write_byte(&mut **self, addr, data)
+    }
+}
+
+impl MemoryBus for AtariMemoryBus<'_> {
+    fn write_byte(&mut self, addr: Word, data: Byte) {
+        self.with_write_bus_member(addr, |member| member.write_byte(addr, data));
+    }
+
+    fn read_byte(&self, addr: Word) -> Byte {
+        self.with_read_bus_member(addr, |member| member.read_byte(addr))
+    }
+}
+
+impl<'a> AtariMemoryBus<'a> {
     pub fn new(
         main_memory: &'a mut BusMember,
         null_bus: &'a mut BusMember,
@@ -73,29 +118,11 @@ impl<'a> MemoryBus<'a> {
             return Err(anyhow::anyhow!("cartridge not a cartridge"));
         };
 
-        Ok(MemoryBus {
+        Ok(AtariMemoryBus {
             main_memory,
             null_bus,
             cartridge,
         })
-    }
-
-    pub fn write_to_zero_page(&mut self, addr: Word, data: Byte) {
-        self.write_byte(addr & 0x00FF, data)
-    }
-
-    pub fn write_byte(&mut self, addr: Word, data: Byte) {
-        self.with_write_bus_member(addr, |member| {
-            member.write_byte(addr, data)
-        });
-    }
-
-    pub fn read_byte(&self, addr: Word) -> Byte {
-        self.with_read_bus_member(addr, |member| member.read_byte(addr))
-    }
-
-    pub fn read_from_zero_page(&self, addr: Word) -> Byte {
-        self.read_byte(addr & 0x00FF)
     }
 
     fn with_read_bus_member<T>(&self, addr: Word, func: impl FnOnce(&&BusMember) -> T) -> T {
