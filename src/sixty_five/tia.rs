@@ -1,7 +1,12 @@
 #![allow(dead_code)]
 
-use std::{cell::RefCell, rc::Rc};
+use std::{
+    cell::RefCell,
+    fmt::{Display, Pointer},
+    rc::Rc,
+};
 
+use enum_display::EnumDisplay;
 use num_derive::FromPrimitive;
 
 use super::memory_bus::{BusRead, BusWrite};
@@ -25,7 +30,7 @@ struct Collisions {
     // TODO: Fill this out with the easiest DS
 }
 
-#[derive(Clone, Copy, Default, FromPrimitive)]
+#[derive(Clone, Copy, Default, FromPrimitive, EnumDisplay)]
 enum Color {
     #[default]
     White = 0x0,
@@ -48,6 +53,13 @@ enum Color {
 
 #[derive(Clone, Copy, Default)]
 struct ElementColor(u8, u8, u8);
+
+impl Display for ElementColor {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let value = (self.0 as u32) << 16 | (self.1 as u32) << 8 | self.2 as u32;
+        write!(f, "{:x}", value)
+    }
+}
 
 impl From<u8> for ElementColor {
     fn from(value: u8) -> Self {
@@ -141,6 +153,12 @@ struct TIAState {
     bk_color: ElementColor,
 }
 
+impl TIAState {
+    fn output_pixel(&self, _pixel_clock: u32) -> ElementColor {
+        self.bk_color
+    }
+}
+
 pub struct WrappedTIA(Rc<RefCell<Tia>>);
 
 impl WrappedTIA {
@@ -184,7 +202,12 @@ impl Tia {
         }
     }
 
-    fn tick_clock(&mut self, _clocks: u32) {}
+    fn tick_clock(&mut self, clocks: u32) {
+        self.current_clock_count += clocks * 3;
+        if self.current_clock_count > PIXEL_COUNT as u32 {
+            self.render_frame();
+        }
+    }
 
     fn horizontal_pos(&self) -> u32 {
         self.current_clock_count % HOR_CLOCK_COUNT as u32
@@ -198,12 +221,31 @@ impl Tia {
         self.current_state.vblank || self.current_state.vsync
     }
 
-    fn render_current_clock(&mut self) {}
+    fn render_frame(&mut self) {
+        let mut cur_state_index = 0;
+        for (i, pixel) in self.current_framebuffer.iter_mut().enumerate() {
+            if cur_state_index < self.previous_states.len() - 1
+                && i as u32 >= self.previous_states[1].0
+            {
+                cur_state_index += 1
+            }
+
+            *pixel = self.previous_states[cur_state_index]
+                .1
+                .output_pixel(i as u32);
+        }
+
+        self.previous_states.clear();
+        self.previous_states[0] = (0, self.current_state.clone());
+    }
 }
 
 impl BusRead for Tia {
     fn read_byte(&self, addr: super::data_types::Word) -> super::data_types::Byte {
-        0
+        let lower_bytes = addr & 0x00FF;
+        match lower_bytes {
+            _ => 0,
+        }
     }
 }
 
@@ -211,8 +253,35 @@ impl BusWrite for Tia {
     fn write_byte(&mut self, addr: super::data_types::Word, data: super::data_types::Byte) {
         let lower_bytes = addr & 0x00FF;
         match lower_bytes {
+            0x00 => {
+                println!("VSYNC requested");
+                self.current_state.vsync = data > 0;
+            }
+            0x01 => {
+                println!("VBLANK requested");
+                self.current_state.vblank = data & 0x2 > 0;
+            }
+            0x02 => {
+                println!("WSYNC requested");
+            }
             0x09 => {
                 self.current_state.bk_color = data.into();
+                println!(
+                    "Setting background color. Color set to {}",
+                    self.current_state.bk_color
+                )
+            }
+            0x1d => {
+                println!("Toggle missle 0");
+                self.current_state.missile_0 = data & 0x2 > 0;
+            }
+            0x1e => {
+                println!("Toggle missle 1");
+                self.current_state.missile_1 = data & 0x2 > 0;
+            }
+            0x1f => {
+                println!("Toggle ball");
+                self.current_state.ball = data & 0x2 > 0;
             }
             _ => println!("Not implemented"),
         };

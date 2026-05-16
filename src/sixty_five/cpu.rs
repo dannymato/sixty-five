@@ -2,12 +2,9 @@ use anyhow;
 
 use crate::sixty_five::data_types::SignedByte;
 
-#[cfg(test)]
-use super::bit_utils::is_bit_set_byte;
-
 use self::code::Opcode;
 use super::{
-    bit_utils::{is_bit_set, page_crossed},
+    bit_utils::{is_bit_set, is_bit_set_byte, page_crossed},
     data_types::{Byte, SignedWord, Word},
     memory_bus::MemoryBus,
 };
@@ -53,46 +50,33 @@ macro_rules! load_register_zero_page_plus {
 macro_rules! sub_register {
     ($self:ident, $register:ident, $operand:ident) => {
         let original = $self.$register;
-        let value = original
-            .wrapping_add($self.carry as Byte)
-            .wrapping_sub(1)
-            .wrapping_sub($operand);
-        $self.$register = value;
+        let value = (original as u16)
+            .wrapping_add($self.carry as u16)
+            .wrapping_add((!$operand) as u16);
+        $self.$register = value as Byte;
         $self.negative = is_bit_set(value as Word, 7);
         $self.zero = value == 0;
         $self.overflow = has_overflow(original, $operand as Byte, value as Byte);
-        $self.carry = $self.overflow;
+        $self.carry = value & 0b100000000 > 0;
     };
 }
 
 macro_rules! add_register {
     ($self:ident, $register:ident, $operand:ident) => {
         let original = $self.$register;
-        let value = original
-            .wrapping_add($operand)
-            .wrapping_add($self.carry as Byte);
-        $self.$register = value;
+        let value = (original as u16)
+            .wrapping_add($operand as u16)
+            .wrapping_add($self.carry as u16);
+        $self.$register = value as u8;
         $self.negative = is_bit_set(value as Word, 7);
         $self.zero = value == 0;
         $self.overflow = has_overflow(original, $operand as Byte, value as Byte);
-        $self.carry = $self.overflow;
+        $self.carry = value & 0b100000000 > 0;
     };
 }
 
 const fn has_overflow(a: Byte, b: Byte, out: Byte) -> bool {
-    let a7 = is_bit_set(a as Word, 7);
-    let b7 = is_bit_set(b as Word, 7);
-    let out7 = is_bit_set(out as Word, 7);
-
-    if a7 && b7 {
-        return !out7;
-    }
-
-    if !(a7 || b7) {
-        return out7;
-    }
-
-    false
+    (a ^ out) & (b ^ out) & 0b10000000 != 0
 }
 
 #[derive(Default)]
@@ -115,11 +99,11 @@ pub struct Cpu<'a> {
 
 impl<'a> Cpu<'a> {
     pub fn new() -> Self {
-        Default::default()
-    }
-
-    pub fn init(&mut self) {
-        self.sp = 0xff;
+        Self {
+            sp: 0xff,
+            pc: 0xfffc,
+            .. Default::default()
+        }
     }
 
     pub fn start(&mut self, bus: &mut impl MemoryBus) -> anyhow::Result<()> {
@@ -157,7 +141,7 @@ impl<'a> Cpu<'a> {
         println!("Flags {}, CPU {}", self.register_values(), self);
     }
 
-    pub fn run_cycle(&mut self, bus: &mut impl MemoryBus) -> anyhow::Result<()> {
+    pub fn run_cycle(&mut self, bus: &mut impl MemoryBus) -> anyhow::Result<u128> {
         let inst = Opcode::decode_opcode(self, bus)?;
         println!("Running instr: {inst}");
         let current_clock = self.clock_cycles;
@@ -165,11 +149,16 @@ impl<'a> Cpu<'a> {
         let after_clock = self.clock_cycles;
 
         debug_assert!(
-            after_clock > current_clock
-                || (after_clock < 10 && current_clock > (u128::MAX - 10))
+            after_clock > current_clock || (after_clock < 10 && current_clock > (u128::MAX - 10))
         );
 
-        Ok(())
+        let clocks_run = if after_clock > current_clock {
+            after_clock - current_clock
+        } else {
+            after_clock + u128::MAX - current_clock
+        };
+
+        Ok(clocks_run)
     }
 
     fn execute(&mut self, inst: Opcode, bus: &mut impl MemoryBus) {
@@ -254,6 +243,7 @@ impl<'a> Cpu<'a> {
             Opcode::BitTestZero(addr) => self.bit_test_zero_page(bus, addr),
             Opcode::BitTestAbs(addr) => self.bit_test_abs(bus, addr),
             Opcode::LShiftAcc => self.shift_left_acc(),
+            Opcode::CompareZero(addr) => self.compare_zero_page(bus, addr),
             Opcode::CompareXImm(value) => self.compare_x_immediate(value),
             Opcode::CompareXZero(addr) => self.compare_x_zero(bus, addr),
             Opcode::CompareYImm(value) => self.compare_y_imm(value),
@@ -830,6 +820,15 @@ impl<'a> Cpu<'a> {
         self.increment_clock(2);
     }
 
+    fn compare_zero_page(&mut self, bus: &impl MemoryBus, addr: Byte) {
+        let value = bus.read_from_zero_page(addr as Word);
+        self.zero = value == self.ra;
+        self.carry = self.ra >= value;
+
+        self.negative = is_bit_set(self.ra.wrapping_sub(value) as Word, 7);
+        self.increment_clock(2);
+    }
+
     fn compare_x_immediate(&mut self, value: Byte) {
         self.zero = self.rx == value;
         self.carry = self.rx >= value;
@@ -897,7 +896,7 @@ impl<'a> Cpu<'a> {
     }
 
     fn fetch_byte(&mut self, memory: &impl MemoryBus) -> Byte {
-        print!("Fetching instr: ");
+        // print!("Fetching instr: ");
         let byte = memory.read_byte(self.pc);
         self.pc = self.pc.wrapping_add(1);
         byte

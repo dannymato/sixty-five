@@ -83,6 +83,7 @@ pub enum Opcode {
     RotateLAcc = 0x2a,
     RotateRAcc = 0x6a,
     CompareImm(Byte) = 0xc9,
+    CompareZero(Byte) = 0xc5,
     CompareXImm(Byte) = 0xe0,
     CompareXZero(Byte) = 0xe4,
     CompareYImm(Byte) = 0xc0,

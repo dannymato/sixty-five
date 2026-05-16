@@ -2,3 +2,4 @@
 /.vscode/
 /decoder_macro/target/
 *.log
+*.a26

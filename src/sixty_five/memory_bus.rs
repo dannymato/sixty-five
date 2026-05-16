@@ -3,6 +3,7 @@ use super::{
     cartridge::Cartridge,
     data_types::{Byte, Word},
     memory::Memory,
+    tia::WrappedTIA,
 };
 
 use anyhow;
@@ -14,36 +15,40 @@ pub trait BusWrite {
     fn write_byte(&mut self, addr: Word, data: Byte);
 }
 
-pub enum BusMember {
+pub enum BusMember<'a> {
     Null(NullBus),
-    MainMemory(Memory),
-    Cartridge(Cartridge),
+    MainMemory(&'a mut Memory),
+    Cartridge(&'a mut Cartridge),
+    TIA(&'a mut WrappedTIA),
 }
 
-impl BusWrite for &mut BusMember {
+impl<'a> BusWrite for &mut BusMember<'a> {
     fn write_byte(&mut self, addr: Word, data: Byte) {
         match self {
             BusMember::Null(null) => null.write_byte(addr, data),
             BusMember::MainMemory(mem) => mem.write_byte(addr, data),
             BusMember::Cartridge(cart) => cart.write_byte(addr, data),
+            BusMember::TIA(tia) => tia.write_byte(addr, data),
         }
     }
 }
 
-impl BusRead for &BusMember {
+impl<'a> BusRead for &BusMember<'a> {
     fn read_byte(&self, addr: Word) -> Byte {
         match self {
             BusMember::Null(null) => null.read_byte(addr),
             BusMember::MainMemory(mem) => mem.read_byte(addr),
             BusMember::Cartridge(cart) => cart.read_byte(addr),
+            BusMember::TIA(tia) => tia.read_byte(addr),
         }
     }
 }
 
 pub struct AtariMemoryBus<'a> {
-    main_memory: &'a mut BusMember,
-    null_bus: &'a mut BusMember,
-    cartridge: &'a mut BusMember,
+    pub main_memory: BusMember<'a>,
+    pub null_bus: BusMember<'a>,
+    pub cartridge: BusMember<'a>,
+    pub tia: BusMember<'a>,
 }
 
 pub struct NullBus {}
@@ -96,19 +101,20 @@ impl<T: MemoryBus> MemoryBus for &mut T {
 
 impl MemoryBus for AtariMemoryBus<'_> {
     fn write_byte(&mut self, addr: Word, data: Byte) {
-        self.with_write_bus_member(addr, |member| member.write_byte(addr, data));
+        self.write_with_bus_member(addr, |mut member| member.write_byte(addr, data));
     }
 
     fn read_byte(&self, addr: Word) -> Byte {
-        self.with_read_bus_member(addr, |member| member.read_byte(addr))
+        self.read_with_bus_member(addr, |member| member.read_byte(addr))
     }
 }
 
 impl<'a> AtariMemoryBus<'a> {
     pub fn new(
-        main_memory: &'a mut BusMember,
-        null_bus: &'a mut BusMember,
-        cartridge: &'a mut BusMember,
+        null_bus: BusMember<'a>,
+        main_memory: BusMember<'a>,
+        cartridge: BusMember<'a>,
+        tia: BusMember<'a>,
     ) -> anyhow::Result<Self> {
         let BusMember::MainMemory(_) = main_memory else {
             return Err(anyhow::anyhow!("main_memory not Memory"));
@@ -122,37 +128,47 @@ impl<'a> AtariMemoryBus<'a> {
             main_memory,
             null_bus,
             cartridge,
+            tia,
         })
     }
 
-    fn with_read_bus_member<T>(&self, addr: Word, func: impl FnOnce(&&BusMember) -> T) -> T {
+    pub fn new_empty() -> Self {
+        Self {
+            main_memory: BusMember::Null(NullBus {}),
+            null_bus: BusMember::Null(NullBus {}),
+            cartridge: BusMember::Null(NullBus {}),
+            tia: BusMember::Null(NullBus {}),
+        }
+    }
+
+    fn read_with_bus_member<T>(&self, addr: Word, func: impl FnOnce(&BusMember) -> T) -> T {
         if is_bit_unset(addr, 12) && is_bit_unset(addr, 7) {
             println!("reading {addr:#04x} from TIA");
-            return func(&&*self.null_bus);
+            return func(&self.tia);
         }
 
         if is_bit_set(addr, 7) && is_bit_unset(addr, 12) && is_bit_unset(addr, 9) {
             println!("reading {addr:#04x} from the PIA memory");
-            return func(&&*self.main_memory);
+            return func(&self.main_memory);
         }
 
         if is_bit_unset(addr, 12) && is_bit_set(addr, 9) && is_bit_set(addr, 7) {
             println!("reading {addr:#04x} from the PIA IO");
-            return func(&&*self.null_bus);
+            return func(&self.null_bus);
         }
 
         if is_bit_set(addr, 12) {
-            println!("reading {addr:#04x} from the cartridge");
-            return func(&&*self.cartridge);
+            // println!("reading {addr:#04x} from the cartridge");
+            return func(&self.cartridge);
         }
 
-        func(&&*self.null_bus)
+        func(&self.null_bus)
     }
 
-    fn with_write_bus_member(&mut self, addr: Word, func: impl FnOnce(&mut &mut BusMember)) {
+    fn write_with_bus_member(&mut self, addr: Word, func: impl FnOnce(&mut BusMember)) {
         if is_bit_unset(addr, 12) && is_bit_unset(addr, 7) {
             println!("Writing {addr:#04x} to the TIA");
-            func(&mut self.null_bus);
+            func(&mut self.tia);
             return;
         }
 

@@ -3,6 +3,7 @@ use std::collections::BTreeMap;
 use serde::Deserialize;
 
 use crate::sixty_five::{
+    bit_utils::is_bit_set_byte,
     data_types::{Byte, Word},
     memory_bus::MemoryBus,
 };
@@ -77,6 +78,10 @@ fn verify_cpu(cpu: Cpu, memory: TestMemory, data: &TestData) {
         "Test {} Unexpected value in PC got: {}, wanted: {}, cpu state: {}",
         data.name, cpu.pc, data.final_state.pc, cpu);
 
+    assert_eq!(cpu.carry, is_bit_set_byte(data.final_state.p, 0),
+        "Test {} Unexpected value in carry got: {}, wanted {}, cpu state: {}",
+        data.name, cpu.carry, is_bit_set_byte(data.final_state.p, 0), cpu);
+
     for (addr, expected_data) in &data.final_state.ram {
         let result = memory.read_byte(*addr);
         assert_eq!(
@@ -90,7 +95,6 @@ fn verify_cpu(cpu: Cpu, memory: TestMemory, data: &TestData) {
 fn single_cpu_test(data: &TestData) -> anyhow::Result<()> {
     let mut cpu = Cpu::new();
 
-    cpu.init();
     let initial_state = &data.initial;
     cpu.initialize_initial_state(
         initial_state.pc,

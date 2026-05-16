@@ -3,17 +3,20 @@
 use std::env;
 
 use anyhow::anyhow;
-use sixty_five::{cartridge::Cartridge, cpu::ClockHandler, memory::Memory, memory_bus::NullBus};
+use sixty_five::{
+    cartridge::Cartridge, cpu::ClockHandler, memory::Memory, memory_bus::NullBus, tia::WrappedTIA,
+};
 
 use crate::sixty_five::{
     cpu::Cpu,
-    memory_bus::{BusMember, AtariMemoryBus},
+    memory_bus::{AtariMemoryBus, BusMember},
     timer::Timer,
+    twentysix::TwentySix,
 };
 
 mod sixty_five;
 
-#[derive(Default)]
+#[derive(Default, Clone, Copy)]
 struct ClockCounter {
     count: u128,
 }
@@ -32,24 +35,19 @@ fn main() -> anyhow::Result<()> {
 
     let cart_path = args.last().ok_or_else(|| anyhow!("Cart path invalid"))?;
 
-    let cartidge = Cartridge::new(cart_path)?;
+    let cartridge = Cartridge::new(cart_path)?;
+    let tia = WrappedTIA::new();
 
     let memory = Memory::new();
-    let mut memory = BusMember::MainMemory(memory);
-    let mut null_bus = BusMember::Null(NullBus {});
-    let mut cartridge = BusMember::Cartridge(cartidge);
-    let mut memory_bus = AtariMemoryBus::new(&mut memory, &mut null_bus, &mut cartridge)?;
 
-    let mut timer = Timer::new();
+    let timer = Timer::new();
 
-    let mut cpu = Cpu::new();
-    cpu.register_clock_handler(&mut timer);
-    let mut clock_counter = ClockCounter::default();
-    cpu.register_clock_handler(&mut clock_counter);
+    let cpu = Cpu::new();
 
-    cpu.init();
-    cpu.start(&mut memory_bus).inspect_err(|_err| {
-        eprintln!("Error occurred clocks completed: {}", clock_counter.count);
+    let mut atari = TwentySix::new(cpu, memory, tia, cartridge, timer);
+
+    atari.run_instruction().inspect_err(|err| {
+        eprintln!("Error occurred: {err}");
     })?;
 
     Ok(())
