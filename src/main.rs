@@ -3,15 +3,13 @@
 use std::env;
 
 use anyhow::anyhow;
+use macroquad::{miniquad::conf::Platform, window};
 use sixty_five::{
-    cartridge::Cartridge, cpu::ClockHandler, memory::Memory, memory_bus::NullBus, tia::WrappedTIA,
+    cartridge::Cartridge, cpu::ClockHandler, memory::Memory, tia::WrappedTIA,
 };
 
 use crate::sixty_five::{
-    cpu::Cpu,
-    memory_bus::{AtariMemoryBus, BusMember},
-    timer::Timer,
-    twentysix::TwentySix,
+    cpu::Cpu, tia::Tia, timer::Timer, twentysix::TwentySix
 };
 
 mod sixty_five;
@@ -27,7 +25,19 @@ impl ClockHandler for ClockCounter {
     }
 }
 
-fn main() -> anyhow::Result<()> {
+fn window_conf() -> window::Conf {
+    window::Conf {
+        window_title: "TwentySix".to_string(),
+        platform: Platform {
+            swap_interval: None,
+            ..Default::default()
+        },
+        ..Default::default()
+    }
+}
+
+#[macroquad::main(window_conf)]
+async fn main() -> anyhow::Result<()> {
     let args = env::args();
     if args.len() < 2 {
         return Err(anyhow::anyhow!("Did not pass path to cart"));
@@ -36,7 +46,7 @@ fn main() -> anyhow::Result<()> {
     let cart_path = args.last().ok_or_else(|| anyhow!("Cart path invalid"))?;
 
     let cartridge = Cartridge::new(cart_path)?;
-    let tia = WrappedTIA::new();
+    let tia = Tia::new();
 
     let memory = Memory::new();
 
@@ -44,11 +54,11 @@ fn main() -> anyhow::Result<()> {
 
     let cpu = Cpu::new();
 
-    let mut atari = TwentySix::new(cpu, memory, tia, cartridge, timer);
+    let mut atari = TwentySix::new(cpu, memory, tia, cartridge, timer)?;
 
-    atari.run_instruction().inspect_err(|err| {
-        eprintln!("Error occurred: {err}");
-    })?;
-
-    Ok(())
+    loop {
+        atari.run_instruction().await.inspect_err(|err| {
+            eprintln!("Error occurred: {err}");
+        })?;
+    }
 }

@@ -106,6 +106,11 @@ impl<'a> Cpu<'a> {
         }
     }
 
+    pub fn init(&mut self, bus: &mut impl MemoryBus) {
+        self.pc = self.fetch_word(bus);
+        println!("Init vector: {:#04x}", self.pc);
+    }
+
     pub fn start(&mut self, bus: &mut impl MemoryBus) -> anyhow::Result<()> {
         self.pc = 0xfffc;
         self.pc = self.fetch_word(bus);
@@ -143,7 +148,7 @@ impl<'a> Cpu<'a> {
 
     pub fn run_cycle(&mut self, bus: &mut impl MemoryBus) -> anyhow::Result<u128> {
         let inst = Opcode::decode_opcode(self, bus)?;
-        println!("Running instr: {inst}");
+        //println!("Running instr: {inst}");
         let current_clock = self.clock_cycles;
         self.execute(inst, bus);
         let after_clock = self.clock_cycles;
@@ -269,6 +274,7 @@ impl<'a> Cpu<'a> {
                 self.increment_clock(2);
             }
             Opcode::Break => {
+                panic!("we shouldn't be breaking");
                 self.break_command = true;
                 self.push_stack_word(bus, self.pc - 1);
                 self.push_stack_byte(bus, self.register_values());
@@ -305,7 +311,7 @@ impl<'a> Cpu<'a> {
             return;
         }
 
-        println!("JUMPING!");
+        //println!("JUMPING!");
 
         let current_pc = self.pc;
         let new_value = (current_pc as SignedWord).wrapping_add((addr as SignedByte) as SignedWord);
@@ -348,20 +354,20 @@ impl<'a> Cpu<'a> {
     }
 
     fn jump_abs(&mut self, addr: Word) {
-        println!("JUMPING");
+        //println!("JUMPING");
         self.pc = addr;
         self.increment_clock(3);
     }
 
     fn jump_ind(&mut self, bus: &impl MemoryBus, addr: Word) {
-        println!("JUMPING");
+        //println!("JUMPING");
         let addr = bus.read_word_abs(addr);
         self.pc = addr;
         self.increment_clock(5);
     }
 
     fn jump_subroutine(&mut self, bus: &mut impl MemoryBus, addr: Word) {
-        println!("JUMPING from {:#04x}", self.pc);
+        //println!("JUMPING from {:#04x}", self.pc);
         self.push_stack_word(bus, self.pc - 1);
         self.pc = addr;
         self.increment_clock(6);
@@ -370,7 +376,7 @@ impl<'a> Cpu<'a> {
     fn return_subroutine(&mut self, bus: &impl MemoryBus) {
         let addr = self.pop_stack_word(bus);
         self.pc = addr + 1;
-        println!("RETURNING to {:#04x}", self.pc);
+        //println!("RETURNING to {:#04x}", self.pc);
         self.increment_clock(7);
     }
 
@@ -479,7 +485,7 @@ impl<'a> Cpu<'a> {
     }
 
     fn pop_stack_byte(&mut self, bus: &impl MemoryBus) -> Byte {
-        println!("POPPING");
+        //println!("POPPING");
         self.sp = self.sp.wrapping_add(1);
         bus.read_byte((self.sp as Word) + 0x100)
     }
@@ -492,13 +498,13 @@ impl<'a> Cpu<'a> {
     }
 
     fn push_stack_byte(&mut self, bus: &mut impl MemoryBus, value: Byte) {
-        println!("PUSHING {value:#02x}");
+        //println!("PUSHING {value:#02x}");
         bus.write_byte((self.sp as Word) + 0x100, value);
         self.sp = self.sp.wrapping_sub(1);
     }
 
     fn push_stack_word(&mut self, bus: &mut impl MemoryBus, value: Word) {
-        println!("PUSH WORD {value:#02x}");
+        //println!("PUSH WORD {value:#02x}");
         let lower = (0xFF & value) as Byte;
         let upper = ((0xFF00 & value) >> 8) as Byte;
 

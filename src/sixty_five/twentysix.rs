@@ -1,18 +1,17 @@
-use crate::sixty_five::{cpu::ClockHandler, memory_bus::NullBus};
+use crate::sixty_five::{cpu::ClockHandler, memory_bus::NullBus, tia::Tia};
 
 use super::{
     cartridge::Cartridge,
     cpu::Cpu,
     memory::Memory,
     memory_bus::{AtariMemoryBus, BusMember},
-    tia::WrappedTIA,
     timer::Timer,
 };
 
 pub struct TwentySix<'a> {
     cpu: Cpu<'a>,
     memory: Memory,
-    tia: WrappedTIA,
+    tia: Tia,
     cartridge: Cartridge,
     timer: Timer,
 }
@@ -21,32 +20,52 @@ impl<'a> TwentySix<'a> {
     pub fn new(
         cpu: Cpu<'a>,
         mem: Memory,
-        tia: WrappedTIA,
+        tia: Tia,
         cartridge: Cartridge,
         timer: Timer,
-    ) -> Self {
-        Self {
+    ) -> anyhow::Result<Self> {
+        let mut ts = Self {
             cpu: cpu,
             memory: mem,
             tia: tia,
             cartridge: cartridge,
             timer: timer,
-        }
+        };
+
+        ts.init()?;
+
+        Ok(ts)
     }
 
-    pub fn run_instruction(&mut self) -> anyhow::Result<()> {
+    fn init(&mut self) -> anyhow::Result<()> {
+        let mut memory_bus = AtariMemoryBus::new(
+            BusMember::Null(NullBus{}),
+            BusMember::MainMemory(&mut self.memory),
+            BusMember::Cartridge(&mut self.cartridge),
+            BusMember::TIA(&mut self.tia),
+            BusMember::Timer(&mut self.timer),
+        )?;
+
+        self.cpu.init(&mut memory_bus);
+
+        Ok(())
+    }
+
+    pub async fn run_instruction(&mut self) -> anyhow::Result<()> {
         let clocks = {
             let mut memory_bus = AtariMemoryBus::new(
                 BusMember::Null(NullBus{}),
                 BusMember::MainMemory(&mut self.memory),
                 BusMember::Cartridge(&mut self.cartridge),
-                BusMember::TIA(&mut self.tia)
+                BusMember::TIA(&mut self.tia),
+                BusMember::Timer(&mut self.timer),
             )?;
 
             self.cpu.run_cycle(&mut memory_bus)?
         };
 
         self.timer.handle_clock(clocks as u32);
+        self.tia.tick_clock(clocks as u32).await;
 
         Ok(())
     }

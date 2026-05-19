@@ -18,7 +18,7 @@ impl Timer {
     pub fn new() -> Self {
         Timer {
             current_time: 0xff,
-            current_interval: 0,
+            current_interval: 1,
             overflowed: true,
         }
     }
@@ -35,7 +35,7 @@ impl Timer {
         0x0
     }
 
-    pub fn write_byte(&mut self, addr: Word, _data: Byte) {
+    pub fn write_byte(&mut self, addr: Word, data: Byte) {
         let addr = 0x0FFF & addr;
         let interval = match addr {
             0x294 => 1,
@@ -45,7 +45,8 @@ impl Timer {
             _ => 1,
         };
 
-        self.reset(interval);
+        self.current_time = data as u32 * interval;
+        self.current_interval = interval;
     }
 }
 

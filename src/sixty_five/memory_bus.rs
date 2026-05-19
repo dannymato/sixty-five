@@ -1,3 +1,5 @@
+use crate::sixty_five::{tia::Tia, timer::Timer};
+
 use super::{
     bit_utils::{is_bit_set, is_bit_unset},
     cartridge::Cartridge,
@@ -19,7 +21,8 @@ pub enum BusMember<'a> {
     Null(NullBus),
     MainMemory(&'a mut Memory),
     Cartridge(&'a mut Cartridge),
-    TIA(&'a mut WrappedTIA),
+    TIA(&'a mut Tia),
+    Timer(&'a mut Timer),
 }
 
 impl<'a> BusWrite for &mut BusMember<'a> {
@@ -29,6 +32,7 @@ impl<'a> BusWrite for &mut BusMember<'a> {
             BusMember::MainMemory(mem) => mem.write_byte(addr, data),
             BusMember::Cartridge(cart) => cart.write_byte(addr, data),
             BusMember::TIA(tia) => tia.write_byte(addr, data),
+            BusMember::Timer(timer) => timer.write_byte(addr, data),
         }
     }
 }
@@ -40,6 +44,7 @@ impl<'a> BusRead for &BusMember<'a> {
             BusMember::MainMemory(mem) => mem.read_byte(addr),
             BusMember::Cartridge(cart) => cart.read_byte(addr),
             BusMember::TIA(tia) => tia.read_byte(addr),
+            BusMember::Timer(timer) => timer.read_byte(addr),
         }
     }
 }
@@ -49,6 +54,7 @@ pub struct AtariMemoryBus<'a> {
     pub null_bus: BusMember<'a>,
     pub cartridge: BusMember<'a>,
     pub tia: BusMember<'a>,
+    pub timer: BusMember<'a>,
 }
 
 pub struct NullBus {}
@@ -115,6 +121,7 @@ impl<'a> AtariMemoryBus<'a> {
         main_memory: BusMember<'a>,
         cartridge: BusMember<'a>,
         tia: BusMember<'a>,
+        timer: BusMember<'a>,
     ) -> anyhow::Result<Self> {
         let BusMember::MainMemory(_) = main_memory else {
             return Err(anyhow::anyhow!("main_memory not Memory"));
@@ -129,31 +136,28 @@ impl<'a> AtariMemoryBus<'a> {
             null_bus,
             cartridge,
             tia,
+            timer,
         })
-    }
-
-    pub fn new_empty() -> Self {
-        Self {
-            main_memory: BusMember::Null(NullBus {}),
-            null_bus: BusMember::Null(NullBus {}),
-            cartridge: BusMember::Null(NullBus {}),
-            tia: BusMember::Null(NullBus {}),
-        }
     }
 
     fn read_with_bus_member<T>(&self, addr: Word, func: impl FnOnce(&BusMember) -> T) -> T {
         if is_bit_unset(addr, 12) && is_bit_unset(addr, 7) {
-            println!("reading {addr:#04x} from TIA");
+            //println!("reading {addr:#04x} from TIA");
             return func(&self.tia);
         }
 
         if is_bit_set(addr, 7) && is_bit_unset(addr, 12) && is_bit_unset(addr, 9) {
-            println!("reading {addr:#04x} from the PIA memory");
+            //println!("reading {addr:#04x} from the PIA memory");
             return func(&self.main_memory);
         }
 
         if is_bit_unset(addr, 12) && is_bit_set(addr, 9) && is_bit_set(addr, 7) {
-            println!("reading {addr:#04x} from the PIA IO");
+            //println!("reading {addr:#04x} from the PIA IO");
+            let lower_bits = 0x00FF & addr;
+            if lower_bits == 0x84 || lower_bits == 0x85 || (lower_bits >= 0x94 && lower_bits <= 0x97) {
+                return func(&self.timer)
+            }
+
             return func(&self.null_bus);
         }
 
@@ -167,19 +171,23 @@ impl<'a> AtariMemoryBus<'a> {
 
     fn write_with_bus_member(&mut self, addr: Word, func: impl FnOnce(&mut BusMember)) {
         if is_bit_unset(addr, 12) && is_bit_unset(addr, 7) {
-            println!("Writing {addr:#04x} to the TIA");
+            //println!("Writing {addr:#04x} to the TIA");
             func(&mut self.tia);
             return;
         }
 
         if is_bit_set(addr, 7) && is_bit_unset(addr, 12) && is_bit_unset(addr, 9) {
-            println!("Writing {addr:#04x} to the PIA memory");
+            //println!("Writing {addr:#04x} to the PIA memory");
             func(&mut self.main_memory);
             return;
         }
 
         if is_bit_unset(addr, 12) && is_bit_set(addr, 9) && is_bit_set(addr, 7) {
-            println!("Writing {addr:#04x} to the PIA IO");
+            //println!("Writing {addr:#04x} to the PIA IO");
+            let lower_bits = 0x00FF & addr;
+            if lower_bits == 0x84 || lower_bits == 0x85 || (lower_bits >= 0x94 && lower_bits <= 0x97) {
+                return func(&mut self.timer)
+            }
             func(&mut self.null_bus);
             return;
         }
