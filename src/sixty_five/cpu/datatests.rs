@@ -74,13 +74,21 @@ fn verify_cpu(cpu: Cpu, memory: TestMemory, data: &TestData) {
         "Test {} Unexpected value in Register Y got: {}, wanted: {}, cpu state: {}",
         data.name, cpu.ry, data.final_state.y, cpu
     );
-    assert_eq!(cpu.pc, data.final_state.pc,
+    assert_eq!(
+        cpu.pc, data.final_state.pc,
         "Test {} Unexpected value in PC got: {}, wanted: {}, cpu state: {}",
-        data.name, cpu.pc, data.final_state.pc, cpu);
+        data.name, cpu.pc, data.final_state.pc, cpu
+    );
 
-    assert_eq!(cpu.carry, is_bit_set_byte(data.final_state.p, 0),
+    assert_eq!(
+        cpu.carry,
+        is_bit_set_byte(data.final_state.p, 0),
         "Test {} Unexpected value in carry got: {}, wanted {}, cpu state: {}",
-        data.name, cpu.carry, is_bit_set_byte(data.final_state.p, 0), cpu);
+        data.name,
+        cpu.carry,
+        is_bit_set_byte(data.final_state.p, 0),
+        cpu
+    );
 
     for (addr, expected_data) in &data.final_state.ram {
         let result = memory.read_byte(*addr);

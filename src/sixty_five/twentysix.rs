@@ -1,4 +1,4 @@
-use crate::sixty_five::{cpu::ClockHandler, memory_bus::NullBus, tia::Tia};
+use crate::sixty_five::{memory_bus::NullBus, tia::Tia};
 
 use super::{
     cartridge::Cartridge,
@@ -8,28 +8,28 @@ use super::{
     timer::Timer,
 };
 
-pub struct TwentySix<'a> {
-    cpu: Cpu<'a>,
+pub struct TwentySix {
+    cpu: Cpu,
     memory: Memory,
     tia: Tia,
     cartridge: Cartridge,
     timer: Timer,
 }
 
-impl<'a> TwentySix<'a> {
+impl TwentySix {
     pub fn new(
-        cpu: Cpu<'a>,
-        mem: Memory,
+        cpu: Cpu,
+        memory: Memory,
         tia: Tia,
         cartridge: Cartridge,
         timer: Timer,
     ) -> anyhow::Result<Self> {
         let mut ts = Self {
-            cpu: cpu,
-            memory: mem,
-            tia: tia,
-            cartridge: cartridge,
-            timer: timer,
+            cpu,
+            memory,
+            tia,
+            cartridge,
+            timer,
         };
 
         ts.init()?;
@@ -39,7 +39,7 @@ impl<'a> TwentySix<'a> {
 
     fn init(&mut self) -> anyhow::Result<()> {
         let mut memory_bus = AtariMemoryBus::new(
-            BusMember::Null(NullBus{}),
+            BusMember::Null(NullBus {}),
             BusMember::MainMemory(&mut self.memory),
             BusMember::Cartridge(&mut self.cartridge),
             BusMember::TIA(&mut self.tia),
@@ -54,7 +54,7 @@ impl<'a> TwentySix<'a> {
     pub async fn run_instruction(&mut self) -> anyhow::Result<()> {
         let clocks = {
             let mut memory_bus = AtariMemoryBus::new(
-                BusMember::Null(NullBus{}),
+                BusMember::Null(NullBus {}),
                 BusMember::MainMemory(&mut self.memory),
                 BusMember::Cartridge(&mut self.cartridge),
                 BusMember::TIA(&mut self.tia),

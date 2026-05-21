@@ -1,6 +1,6 @@
 #![allow(dead_code)]
 
-use std::{cell::RefCell, fmt::Display, rc::Rc, time::Instant};
+use std::{fmt::Display, time::Instant};
 
 use bytemuck::{Pod, Zeroable};
 use enum_display::EnumDisplay;
@@ -12,6 +12,8 @@ use macroquad::{
     window::{self, screen_height, screen_width},
 };
 use num_derive::FromPrimitive;
+
+use crate::sixty_five::bit_utils::is_bit_set_byte;
 
 use super::memory_bus::{BusRead, BusWrite};
 
@@ -121,7 +123,9 @@ impl From<u8> for ElementColor {
             0x78 | 0x79 => ElementColor(0x7C, 0x70, 0xD0, 0xFF),
             0x88 | 0x89 => ElementColor(0x68, 0x74, 0xD0, 0xFF),
             0x98 | 0x99 => ElementColor(0x68, 0x88, 0xCC, 0xFF),
-            _ => panic!("somehow something bad happened"),
+            0xd2 => ElementColor(0x10, 0x36, 0x00, 0xff),
+            0xd6 => ElementColor(0x53, 0x7e, 0x00, 0xff),
+            _ => panic!("Unknown ElementColor found {:#x}", value),
         }
     }
 }
@@ -159,38 +163,39 @@ struct TIAState {
 }
 
 impl TIAState {
-    fn output_pixel(&self, _pixel_clock: u32) -> ElementColor {
+    fn output_pixel(&self, pixel_clock: u32) -> ElementColor {
         if self.vblank {
-            return ElementColor(0, 0, 0, 0xff);
+            return ElementColor(0xff, 0, 0, 0xff);
         }
+
+        let horizontal_pos = pixel_clock % HOR_CLOCK_COUNT as u32;
+
+        if horizontal_pos < HORIZONTAL_BLANK {
+            return ElementColor(0xff, 0xff, 0, 0xff);
+        }
+
+        let horizontal_pos = horizontal_pos - HORIZONTAL_BLANK;
+
+        if horizontal_pos < 80 {
+            if self.playfield[(horizontal_pos / 4) as usize] {
+                return self.pf_color;
+            }
+        } else {
+            let index = horizontal_pos / 2 / 4;
+            if self.playfield[index as usize] {
+                return self.pf_color;
+            }
+        }
+
         self.bk_color
-    }
-}
-
-pub struct WrappedTIA(Rc<RefCell<Tia>>);
-
-impl WrappedTIA {
-    pub fn new() -> Self {
-        Self(Rc::new(RefCell::new(Tia::new())))
-    }
-
-    pub fn read_byte(&self, addr: super::data_types::Word) -> super::data_types::Byte {
-        self.0.borrow().read_byte(addr)
-    }
-
-    pub fn write_byte(&self, addr: super::data_types::Word, data: super::data_types::Byte) {
-        self.0.borrow_mut().write_byte(addr, data)
-    }
-
-    pub async fn tick_clock(&self, clock: u32) {
-        self.0.borrow_mut().tick_clock(clock).await;
     }
 }
 
 // Includes VSYNC and VBLANK since those can be variable
 const SCANLINE_COUNT: usize = 262;
-const HOR_CLOCK_COUNT: usize = 160;
+const HOR_CLOCK_COUNT: usize = 228;
 const HORIZONTAL_BLANK: u32 = 68;
+const DISPLAYABLE_HORIZONTAL_PIXELS: u32 = HOR_CLOCK_COUNT as u32 - HORIZONTAL_BLANK;
 
 const PIXEL_COUNT: usize = SCANLINE_COUNT * HOR_CLOCK_COUNT;
 
@@ -225,17 +230,18 @@ impl Tia {
     }
 
     pub async fn tick_clock(&mut self, clocks: u32) {
-        if self.render_next_tick || self.current_clock_count >= CPU_CLOCK_COUNT {
+        if self.render_next_tick {
             self.render_frame().await;
         }
-        for _i in 0..clocks {
-            self.current_clock_count += 1;
 
-            if self.current_clock_count % 3 == 0 {
-                let pixel_idx = self.current_clock_count / 3;
-                self.current_framebuffer[pixel_idx as usize] =
-                    self.current_state.output_pixel(pixel_idx);
+        for _i in 0..(clocks * 3) {
+            self.current_clock_count += 1;
+            if self.current_clock_count >= PIXEL_COUNT as u32 {
+                continue;
             }
+
+            self.current_framebuffer[self.current_clock_count as usize] =
+                self.current_state.output_pixel(self.current_clock_count);
         }
     }
 
@@ -278,7 +284,7 @@ impl Tia {
         println!("Time since last frame {}", time::get_frame_time());
 
         for pixel in self.current_framebuffer.iter_mut() {
-            *pixel = ElementColor(0, 0, 0, 0xff);
+            *pixel = ElementColor(0xff, 0, 0xff, 0xff);
         }
         self.current_clock_count = 0;
         self.render_next_tick = false;
@@ -336,6 +342,38 @@ impl BusWrite for Tia {
             0x1f => {
                 //println!("Toggle ball");
                 self.current_state.ball = data & 0x2 > 0;
+            }
+            0x0d => {
+                let playfield = &mut self.current_state.playfield;
+                playfield[0] = is_bit_set_byte(data, 4);
+                playfield[1] = is_bit_set_byte(data, 5);
+                playfield[2] = is_bit_set_byte(data, 6);
+                playfield[3] = is_bit_set_byte(data, 7);
+            }
+            0x0e => {
+                let playfield = &mut self.current_state.playfield;
+                playfield[4] = is_bit_set_byte(data, 7);
+                playfield[5] = is_bit_set_byte(data, 6);
+                playfield[6] = is_bit_set_byte(data, 5);
+                playfield[7] = is_bit_set_byte(data, 4);
+                playfield[8] = is_bit_set_byte(data, 3);
+                playfield[9] = is_bit_set_byte(data, 2);
+                playfield[10] = is_bit_set_byte(data, 1);
+                playfield[11] = is_bit_set_byte(data, 0);
+            }
+            0x0f => {
+                let playfield = &mut self.current_state.playfield;
+                playfield[12] = is_bit_set_byte(data, 0);
+                playfield[13] = is_bit_set_byte(data, 1);
+                playfield[14] = is_bit_set_byte(data, 2);
+                playfield[15] = is_bit_set_byte(data, 3);
+                playfield[16] = is_bit_set_byte(data, 4);
+                playfield[17] = is_bit_set_byte(data, 5);
+                playfield[18] = is_bit_set_byte(data, 6);
+                playfield[19] = is_bit_set_byte(data, 7);
+            }
+            0x08 => {
+                self.current_state.pf_color = data.into();
             }
             _ => (), //println!("Not implemented"),
         };

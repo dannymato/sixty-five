@@ -21,10 +21,7 @@ pub enum Cartridge {
 }
 
 impl BusRead for Cartridge {
-    fn read_byte(
-        &self,
-        addr: Word,
-    ) -> super::data_types::Byte {
+    fn read_byte(&self, addr: Word) -> super::data_types::Byte {
         match self {
             Self::FourK(f) => f.read_byte(addr),
         }
@@ -32,11 +29,7 @@ impl BusRead for Cartridge {
 }
 
 impl BusWrite for Cartridge {
-    fn write_byte(
-        &mut self,
-        _addr: Word,
-        _data: Byte,
-    ) {
+    fn write_byte(&mut self, _addr: Word, _data: Byte) {
         eprintln!("BAD: Should not be writing to the cartridge");
     }
 }

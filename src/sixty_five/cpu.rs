@@ -19,10 +19,6 @@ pub trait OpcodeDecoder {
     fn decode_opcode(cpu: &mut Cpu, memory: &mut impl MemoryBus) -> anyhow::Result<Opcode>;
 }
 
-pub trait ClockHandler {
-    fn handle_clock(&mut self, clocks: u32);
-}
-
 macro_rules! load_register {
     ($self:ident, $variable:ident, $register:ident) => {
         $self.$register = $variable;
@@ -80,7 +76,7 @@ const fn has_overflow(a: Byte, b: Byte, out: Byte) -> bool {
 }
 
 #[derive(Default)]
-pub struct Cpu<'a> {
+pub struct Cpu {
     pc: Word,
     sp: Byte,
     ra: Byte,
@@ -94,31 +90,20 @@ pub struct Cpu<'a> {
     overflow: bool,
     negative: bool,
     clock_cycles: u128,
-    clock_handlers: Vec<&'a mut dyn ClockHandler>,
 }
 
-impl<'a> Cpu<'a> {
+impl Cpu {
     pub fn new() -> Self {
         Self {
             sp: 0xff,
             pc: 0xfffc,
-            .. Default::default()
+            ..Default::default()
         }
     }
 
     pub fn init(&mut self, bus: &mut impl MemoryBus) {
         self.pc = self.fetch_word(bus);
         println!("Init vector: {:#04x}", self.pc);
-    }
-
-    pub fn start(&mut self, bus: &mut impl MemoryBus) -> anyhow::Result<()> {
-        self.pc = 0xfffc;
-        self.pc = self.fetch_word(bus);
-        println!("Init vector: {:#04x}", self.pc);
-
-        loop {
-            self.run_cycle(bus)?;
-        }
     }
 
     #[cfg(test)]
@@ -274,7 +259,6 @@ impl<'a> Cpu<'a> {
                 self.increment_clock(2);
             }
             Opcode::Break => {
-                panic!("we shouldn't be breaking");
                 self.break_command = true;
                 self.push_stack_word(bus, self.pc - 1);
                 self.push_stack_byte(bus, self.register_values());
@@ -891,14 +875,6 @@ impl<'a> Cpu<'a> {
 
     fn increment_clock(&mut self, cycles_used: u32) {
         self.clock_cycles = self.clock_cycles.wrapping_add(cycles_used as u128);
-
-        for handler in self.clock_handlers.iter_mut() {
-            handler.handle_clock(cycles_used);
-        }
-    }
-
-    pub fn register_clock_handler(&mut self, handler: &'a mut dyn ClockHandler) {
-        self.clock_handlers.push(handler);
     }
 
     fn fetch_byte(&mut self, memory: &impl MemoryBus) -> Byte {
@@ -926,7 +902,7 @@ impl<'a> Cpu<'a> {
     }
 }
 
-impl Display for Cpu<'_> {
+impl Display for Cpu {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,

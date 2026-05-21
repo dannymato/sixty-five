@@ -26,7 +26,6 @@ fn test_set_zero_upper_mirror() {
     );
 }
 
-
 #[test]
 fn test_set_top() {
     const DATA: Byte = 0xf1;
@@ -39,7 +38,6 @@ fn test_set_top() {
         DATA, memory.buffer[127]
     );
 }
-
 
 #[test]
 fn test_set_top_upper_mirror() {

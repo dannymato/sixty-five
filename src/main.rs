@@ -4,26 +4,11 @@ use std::env;
 
 use anyhow::anyhow;
 use macroquad::{miniquad::conf::Platform, window};
-use sixty_five::{
-    cartridge::Cartridge, cpu::ClockHandler, memory::Memory, tia::WrappedTIA,
-};
+use sixty_five::{cartridge::Cartridge, memory::Memory};
 
-use crate::sixty_five::{
-    cpu::Cpu, tia::Tia, timer::Timer, twentysix::TwentySix
-};
+use crate::sixty_five::{cpu::Cpu, tia::Tia, timer::Timer, twentysix::TwentySix};
 
 mod sixty_five;
-
-#[derive(Default, Clone, Copy)]
-struct ClockCounter {
-    count: u128,
-}
-
-impl ClockHandler for ClockCounter {
-    fn handle_clock(&mut self, clocks: u32) {
-        self.count += clocks as u128;
-    }
-}
 
 fn window_conf() -> window::Conf {
     window::Conf {
@@ -38,12 +23,14 @@ fn window_conf() -> window::Conf {
 
 #[macroquad::main(window_conf)]
 async fn main() -> anyhow::Result<()> {
-    let args = env::args();
+    let mut args = env::args();
     if args.len() < 2 {
         return Err(anyhow::anyhow!("Did not pass path to cart"));
     }
 
-    let cart_path = args.last().ok_or_else(|| anyhow!("Cart path invalid"))?;
+    let cart_path = args
+        .next_back()
+        .ok_or_else(|| anyhow!("Cart path invalid"))?;
 
     let cartridge = Cartridge::new(cart_path)?;
     let tia = Tia::new();

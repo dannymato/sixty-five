@@ -5,7 +5,6 @@ use super::{
     cartridge::Cartridge,
     data_types::{Byte, Word},
     memory::Memory,
-    tia::WrappedTIA,
 };
 
 use anyhow;
@@ -23,6 +22,7 @@ pub enum BusMember<'a> {
     Cartridge(&'a mut Cartridge),
     TIA(&'a mut Tia),
     Timer(&'a mut Timer),
+    Constant(Byte),
 }
 
 impl<'a> BusWrite for &mut BusMember<'a> {
@@ -33,6 +33,7 @@ impl<'a> BusWrite for &mut BusMember<'a> {
             BusMember::Cartridge(cart) => cart.write_byte(addr, data),
             BusMember::TIA(tia) => tia.write_byte(addr, data),
             BusMember::Timer(timer) => timer.write_byte(addr, data),
+            BusMember::Constant(_) => {}
         }
     }
 }
@@ -45,6 +46,7 @@ impl<'a> BusRead for &BusMember<'a> {
             BusMember::Cartridge(cart) => cart.read_byte(addr),
             BusMember::TIA(tia) => tia.read_byte(addr),
             BusMember::Timer(timer) => timer.read_byte(addr),
+            BusMember::Constant(byte) => *byte,
         }
     }
 }
@@ -154,8 +156,12 @@ impl<'a> AtariMemoryBus<'a> {
         if is_bit_unset(addr, 12) && is_bit_set(addr, 9) && is_bit_set(addr, 7) {
             //println!("reading {addr:#04x} from the PIA IO");
             let lower_bits = 0x00FF & addr;
-            if lower_bits == 0x84 || lower_bits == 0x85 || (lower_bits >= 0x94 && lower_bits <= 0x97) {
-                return func(&self.timer)
+            if lower_bits == 0x84 || lower_bits == 0x85 || (0x94..=0x97).contains(&lower_bits) {
+                return func(&self.timer);
+            }
+
+            if addr & 0x0282 > 0 {
+                return func(&BusMember::Constant(0b0001000));
             }
 
             return func(&self.null_bus);
@@ -185,8 +191,8 @@ impl<'a> AtariMemoryBus<'a> {
         if is_bit_unset(addr, 12) && is_bit_set(addr, 9) && is_bit_set(addr, 7) {
             //println!("Writing {addr:#04x} to the PIA IO");
             let lower_bits = 0x00FF & addr;
-            if lower_bits == 0x84 || lower_bits == 0x85 || (lower_bits >= 0x94 && lower_bits <= 0x97) {
-                return func(&mut self.timer)
+            if lower_bits == 0x84 || lower_bits == 0x85 || (0x94..=0x97).contains(&lower_bits) {
+                return func(&mut self.timer);
             }
             func(&mut self.null_bus);
             return;

@@ -1,7 +1,4 @@
-use super::{
-    cpu::ClockHandler,
-    data_types::{Byte, Word},
-};
+use super::data_types::{Byte, Word};
 
 #[cfg(test)]
 mod tests;
@@ -48,10 +45,8 @@ impl Timer {
         self.current_time = data as u32 * interval;
         self.current_interval = interval;
     }
-}
 
-impl ClockHandler for Timer {
-    fn handle_clock(&mut self, clocks: u32) {
+    pub fn handle_clock(&mut self, clocks: u32) {
         if clocks > self.current_time {
             let current = self.current_time;
             self.current_time = TIMER_START;

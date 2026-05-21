@@ -1,10 +1,10 @@
-pub mod cpu;
+mod bit_utils;
 pub mod cartridge;
+pub mod cpu;
 mod data_types;
+mod io_bus;
 pub mod memory;
 pub mod memory_bus;
-pub mod timer;
-mod bit_utils;
-mod io_bus;
 pub mod tia;
+pub mod timer;
 pub mod twentysix;
