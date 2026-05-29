@@ -139,27 +139,31 @@ struct TIAState {
     ball_above_missles: bool,
     ball_size: u8,
     playfield: [bool; 20],
-    missile_0_size: u8,
-    missile_1_size: u8,
-    player_0_size: PlayerSize,
-    player_1_size: PlayerSize,
-    player_0: u8,
-    player_1: u8,
+    missile0_size: u8,
+    missile1_size: u8,
+    player0_size: PlayerSize,
+    player1_size: PlayerSize,
+    player0: u8,
+    player1: u8,
     missile_0: bool,
     missile_1: bool,
     ball: bool,
     reflect_player_0: bool,
     reflect_player_1: bool,
-    player_0_motion: i8,
-    player_1_motion: i8,
-    missile_0_motion: i8,
-    missile_1_motion: i8,
+    player0_motion: i8,
+    player1_motion: i8,
+    missile0_motion: i8,
+    missile1_motion: i8,
     ball_motion: i8,
     collisions: Collisions,
     up0_color: ElementColor,
     up1_color: ElementColor,
     pf_color: ElementColor,
     bk_color: ElementColor,
+    player0_pos: u8,
+    player1_pos: u8,
+    missile1_pos: u8,
+    ball_pos: u8,
 }
 
 impl TIAState {
@@ -181,7 +185,11 @@ impl TIAState {
                 return self.pf_color;
             }
         } else {
-            let index = horizontal_pos / 2 / 4;
+            let mut index = (horizontal_pos - 80) / 4;
+
+            if self.playfield_reflection {
+                index = 19 - index;
+            }
             if self.playfield[index as usize] {
                 return self.pf_color;
             }
@@ -374,8 +382,36 @@ impl BusWrite for Tia {
             }
             0x08 => {
                 self.current_state.pf_color = data.into();
+            },
+            0x0a => {
+                self.current_state.playfield_reflection = is_bit_set_byte(data, 0);
+            },
+            0x20 => {
+                self.current_state.player0_motion = sign_extend_motion(data);
+                debug_assert!((-8..=7).contains(&self.current_state.player0_motion));
+            },
+            0x21 => {
+                self.current_state.player1_motion = sign_extend_motion(data);
+                debug_assert!((-8..=7).contains(&self.current_state.player1_motion));
+            },
+            0x22 => {
+                self.current_state.missile0_motion = sign_extend_motion(data);
+                debug_assert!((-8..=7).contains(&self.current_state.missile0_motion));
+            },
+            0x23 => {
+                self.current_state.missile1_motion = sign_extend_motion(data);
+                debug_assert!((-8..=7).contains(&self.current_state.missile1_motion));
+            },
+            0x24 => {
+                self.current_state.ball_motion = sign_extend_motion(data);
+                debug_assert!((-8..=7).contains(&self.current_state.ball_motion));
             }
             _ => (), //println!("Not implemented"),
         };
     }
+}
+
+#[inline]
+const fn sign_extend_motion(motion: u8) -> i8 {
+    motion as i8 >> 4
 }
