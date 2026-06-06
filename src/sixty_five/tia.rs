@@ -13,7 +13,11 @@ use macroquad::{
 };
 use num_derive::FromPrimitive;
 
-use crate::sixty_five::bit_utils::is_bit_set_byte;
+use crate::sixty_five::{
+    bit_utils::is_bit_set_byte,
+    data_types::{Byte, Word},
+    event_bus::{Event, EventWriter},
+};
 
 use super::memory_bus::{BusRead, BusWrite};
 
@@ -74,6 +78,8 @@ impl From<u8> for ElementColor {
             // These are the NTSC colors, if we want to support PAL or SECAM or B/W we'll have to
             // change
             0x00 | 0x01 => ElementColor(0x00, 0x00, 0x00, 0xFF),
+            0x0c => ElementColor(0xc7, 0xc7, 0xc7, 0xff),
+            0x0e => ElementColor(0xed, 0xed, 0xed, 0xff),
             0x10 | 0x11 => ElementColor(0x44, 0x44, 0x00, 0xFF),
             0x20 | 0x21 => ElementColor(0x70, 0x28, 0x00, 0xFF),
             0x30 | 0x31 => ElementColor(0x84, 0x18, 0x00, 0xFF),
@@ -88,6 +94,7 @@ impl From<u8> for ElementColor {
             0x22 | 0x23 => ElementColor(0x84, 0x44, 0x14, 0xFF),
             0x32 | 0x33 => ElementColor(0x98, 0x34, 0x18, 0xFF),
             0x42 | 0x43 => ElementColor(0x9C, 0x20, 0x20, 0xFF),
+            0x4a => ElementColor(0xfe, 0x67, 0xaa, 0xff),
             0x52 | 0x53 => ElementColor(0x8C, 0x20, 0x74, 0xFF),
             0x62 | 0x63 => ElementColor(0x60, 0x20, 0x90, 0xFF),
             0x72 | 0x73 => ElementColor(0x30, 0x20, 0x98, 0xFF),
@@ -123,7 +130,10 @@ impl From<u8> for ElementColor {
             0x78 | 0x79 => ElementColor(0x7C, 0x70, 0xD0, 0xFF),
             0x88 | 0x89 => ElementColor(0x68, 0x74, 0xD0, 0xFF),
             0x98 | 0x99 => ElementColor(0x68, 0x88, 0xCC, 0xFF),
+            0x1c => ElementColor(0xf2, 0xd2, 0x19, 0xff),
+            0xc8 => ElementColor(0x49, 0xb5, 0x09, 0xff),
             0xd2 => ElementColor(0x10, 0x36, 0x00, 0xff),
+            0xd4 => ElementColor(0x30, 0x59, 0x00, 0xff),
             0xd6 => ElementColor(0x53, 0x7e, 0x00, 0xff),
             _ => panic!("Unknown ElementColor found {:#x}", value),
         }
@@ -144,10 +154,13 @@ struct TIAState {
     player0_size: PlayerSize,
     player1_size: PlayerSize,
     player0: u8,
+    player0_preregister: u8,
     player1: u8,
+    player1_preregister: u8,
     missile_0: bool,
     missile_1: bool,
     ball: bool,
+    ball_preregister: bool,
     reflect_player_0: bool,
     reflect_player_1: bool,
     player0_motion: i8,
@@ -156,14 +169,20 @@ struct TIAState {
     missile1_motion: i8,
     ball_motion: i8,
     collisions: Collisions,
+    // player0, missile0
     up0_color: ElementColor,
+    // player1, missile1
     up1_color: ElementColor,
     pf_color: ElementColor,
     bk_color: ElementColor,
     player0_pos: u8,
     player1_pos: u8,
+    missile0_pos: u8,
     missile1_pos: u8,
     ball_pos: u8,
+    delay_player0: bool,
+    delay_player1: bool,
+    delay_ball: bool,
 }
 
 impl TIAState {
@@ -178,7 +197,29 @@ impl TIAState {
             return ElementColor(0xff, 0xff, 0, 0xff);
         }
 
+        // Normal color priority: player0,missile1 -> player1,missile1 -> playfield -> background
+
         let horizontal_pos = horizontal_pos - HORIZONTAL_BLANK;
+
+        if (self.player0_pos..self.player0_pos.saturating_add(8)).contains(&(horizontal_pos as u8))
+            && is_bit_set_byte(self.player0, horizontal_pos as u8 - self.player0_pos)
+        {
+            return self.up0_color;
+        }
+
+        if self.missile_0 && horizontal_pos as u8 == self.missile0_pos {
+            return self.up0_color;
+        }
+
+        if (self.player1_pos..self.player1_pos.saturating_add(8)).contains(&(horizontal_pos as u8))
+            && is_bit_set_byte(self.player1, horizontal_pos as u8 - self.player1_pos)
+        {
+            return self.up1_color;
+        }
+
+        if self.missile_1 && horizontal_pos as u8 == self.missile1_pos {
+            return self.up1_color;
+        }
 
         if horizontal_pos < 80 {
             if self.playfield[(horizontal_pos / 4) as usize] {
@@ -215,10 +256,11 @@ pub struct Tia {
     current_framebuffer: [ElementColor; PIXEL_COUNT],
     render_next_tick: bool,
     texture: Texture2D,
+    event_writer: EventWriter,
 }
 
 impl Tia {
-    pub fn new() -> Self {
+    pub fn new(event_writer: EventWriter) -> Self {
         let framebuffer = [ElementColor::default(); PIXEL_COUNT];
 
         let texture = Texture2D::from_rgba8(
@@ -234,6 +276,7 @@ impl Tia {
             current_framebuffer: framebuffer,
             render_next_tick: false,
             texture,
+            event_writer,
         }
     }
 
@@ -288,6 +331,8 @@ impl Tia {
         let start = Instant::now();
         window::next_frame().await;
 
+        //sleep(Duration::from_secs(2));
+
         println!("Next frame took {:?}", start.elapsed());
         println!("Time since last frame {}", time::get_frame_time());
 
@@ -297,30 +342,20 @@ impl Tia {
         self.current_clock_count = 0;
         self.render_next_tick = false;
     }
-}
 
-impl BusRead for Tia {
-    fn read_byte(&self, addr: super::data_types::Word) -> super::data_types::Byte {
-        let lower_bytes = addr & 0x00FF;
-        match lower_bytes {
-            _ => 0,
-        }
-    }
-}
-
-impl BusWrite for Tia {
-    fn write_byte(&mut self, addr: super::data_types::Word, data: super::data_types::Byte) {
+    fn set_data(&mut self, addr: Word, data: Byte) {
         let lower_bytes = addr & 0x00FF;
         match lower_bytes {
             0x00 => {
-                self.current_state.vsync = data > 0;
+                let new_vsync = data > 0;
                 println!(
                     "VSYNC requested: {}, {}",
                     self.current_state.vsync, self.current_clock_count
                 );
-                if !self.current_state.vsync {
+                if self.current_state.vsync && !new_vsync {
                     self.render_next_tick = true
                 }
+                self.current_state.vsync = new_vsync;
             }
             0x01 => {
                 self.current_state.vblank = data & 0x2 > 0;
@@ -330,7 +365,18 @@ impl BusWrite for Tia {
                 );
             }
             0x02 => {
+                let current_hor = self.horizontal_pos();
+                let missing = HOR_CLOCK_COUNT as u32 - current_hor;
+                self.event_writer
+                    .push_event(Event::ForwardClock(missing / 3));
                 //println!("WSYNC requested");
+            }
+            0x06 => {
+                self.current_state.up0_color = data.into();
+            }
+            0x07 => self.current_state.up1_color = data.into(),
+            0x08 => {
+                self.current_state.pf_color = data.into();
             }
             0x09 => {
                 self.current_state.bk_color = data.into();
@@ -338,6 +384,27 @@ impl BusWrite for Tia {
                     "Setting background color. Color set to {:x} {}, {}",
                     data, self.current_state.bk_color, self.current_clock_count
                 )
+            }
+            0x1b => {
+                self.current_state.player0_preregister = data;
+                if !self.current_state.delay_player0 {
+                    self.current_state.player0 = data;
+                }
+                if self.current_state.delay_player1 {
+                    self.current_state.player1 = self.current_state.player1_preregister;
+                }
+            }
+            0x1c => {
+                self.current_state.player1_preregister = data;
+                if !self.current_state.delay_player1 {
+                    self.current_state.player1 = data;
+                }
+                if self.current_state.delay_player0 {
+                    self.current_state.player0 = self.current_state.player0_preregister;
+                }
+                if self.current_state.delay_ball {
+                    self.current_state.ball = self.current_state.ball_preregister;
+                }
             }
             0x1d => {
                 //println!("Toggle missle 0");
@@ -349,8 +416,20 @@ impl BusWrite for Tia {
             }
             0x1f => {
                 //println!("Toggle ball");
-                self.current_state.ball = data & 0x2 > 0;
-            }
+                self.current_state.ball_preregister = data & 0x2 > 0;
+                if !self.current_state.delay_ball {
+                    self.current_state.ball = data & 0x2 > 0;
+                }
+            },
+            0x25 => {
+                self.current_state.delay_player0 = data & 0x1 > 0;
+            },
+            0x26 => {
+                self.current_state.delay_player1 = data & 0x1 > 0;
+            },
+            0x27 => {
+                self.current_state.delay_ball = data & 0x1 > 0;
+            },
             0x0d => {
                 let playfield = &mut self.current_state.playfield;
                 playfield[0] = is_bit_set_byte(data, 4);
@@ -380,34 +459,97 @@ impl BusWrite for Tia {
                 playfield[18] = is_bit_set_byte(data, 6);
                 playfield[19] = is_bit_set_byte(data, 7);
             }
-            0x08 => {
-                self.current_state.pf_color = data.into();
-            },
             0x0a => {
                 self.current_state.playfield_reflection = is_bit_set_byte(data, 0);
-            },
+            }
             0x20 => {
                 self.current_state.player0_motion = sign_extend_motion(data);
                 debug_assert!((-8..=7).contains(&self.current_state.player0_motion));
-            },
+            }
             0x21 => {
                 self.current_state.player1_motion = sign_extend_motion(data);
                 debug_assert!((-8..=7).contains(&self.current_state.player1_motion));
-            },
+            }
             0x22 => {
                 self.current_state.missile0_motion = sign_extend_motion(data);
                 debug_assert!((-8..=7).contains(&self.current_state.missile0_motion));
-            },
+            }
             0x23 => {
                 self.current_state.missile1_motion = sign_extend_motion(data);
                 debug_assert!((-8..=7).contains(&self.current_state.missile1_motion));
-            },
+            }
             0x24 => {
                 self.current_state.ball_motion = sign_extend_motion(data);
                 debug_assert!((-8..=7).contains(&self.current_state.ball_motion));
             }
+            0x2a => {
+                // HMOVE
+                if !self.is_hblank() {
+                    println!("Moving outside of hblank");
+                }
+                let state = &mut self.current_state;
+                state.ball_pos = (state.ball_pos as i8).wrapping_add(state.ball_motion as i8) as u8;
+
+                state.player0_pos =
+                    (state.player0_pos as i8).wrapping_add(state.player0_motion) as u8;
+
+                state.player1_pos =
+                    (state.player1_pos as i8).wrapping_add(state.player1_motion) as u8;
+
+                state.missile0_pos =
+                    (state.missile0_pos as i8).wrapping_add(state.missile0_motion) as u8;
+
+                state.missile1_pos =
+                    (state.missile1_pos as i8).wrapping_add(state.missile1_motion as i8) as u8;
+            }
+            0x2b => {
+                let state = &mut self.current_state;
+                state.player0_motion = 0;
+                state.player1_motion = 0;
+                state.missile0_motion = 0;
+                state.missile1_motion = 0;
+                state.ball_motion = 0;
+            },
+            0x10 => {
+                self.current_state.player0_pos = self.horizontal_reset();
+            }
+            0x11 => {
+                self.current_state.player1_pos = self.horizontal_reset();
+            }
+            0x12 => {
+                self.current_state.missile0_pos = self.horizontal_reset();
+            }
+            0x13 => {
+                self.current_state.missile1_pos = self.horizontal_reset();
+            }
+            0x14 => {
+                self.current_state.ball_pos = self.horizontal_reset();
+            }
             _ => (), //println!("Not implemented"),
         };
+    }
+
+    fn horizontal_reset(&self) -> u8 {
+        if self.is_hblank() {
+            return 0;
+        }
+
+        (self.horizontal_pos() - HORIZONTAL_BLANK) as u8
+    }
+}
+
+impl BusRead for Tia {
+    fn read_byte(&self, addr: Word) -> Byte {
+        let lower_bytes = addr & 0x00FF;
+        match lower_bytes {
+            _ => 0,
+        }
+    }
+}
+
+impl BusWrite for Tia {
+    fn write_byte(&mut self, addr: Word, data: Byte) {
+        self.set_data(addr, data);
     }
 }
 

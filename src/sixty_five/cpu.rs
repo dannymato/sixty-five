@@ -1,4 +1,8 @@
 use anyhow;
+use genawaiter::{
+    rc::{Co, Gen},
+    Generator,
+};
 
 use crate::sixty_five::data_types::SignedByte;
 
@@ -131,18 +135,27 @@ impl Cpu {
         println!("Flags {}, CPU {}", self.register_values(), self);
     }
 
-    pub fn run_cycle(&mut self, bus: &mut impl MemoryBus) -> anyhow::Result<u128> {
+    pub fn run_cycle<'a, T: MemoryBus>(
+        &mut self,
+        bus: &'a mut T,
+    ) -> impl Generator<Yield = u128, Return = anyhow::Result<u128>> + use<'a, '_, T> {
+        let gen = Gen::new(move |co| self.run_cycle_priv(co, bus));
+        gen
+    }
+
+    async fn run_cycle_priv(
+        &mut self,
+        mut co: Co<u128>,
+        bus: &mut impl MemoryBus,
+    ) -> anyhow::Result<u128> {
         let inst = Opcode::decode_opcode(self, bus)?;
         //println!("Running instr: {inst}");
         let current_clock = self.clock_cycles;
-        self.execute(inst, bus);
+        self.execute(&mut co, inst, bus).await;
         let after_clock = self.clock_cycles;
 
-        debug_assert!(
-            after_clock > current_clock || (after_clock < 10 && current_clock > (u128::MAX - 10))
-        );
 
-        let clocks_run = if after_clock > current_clock {
+        let clocks_run = if after_clock >= current_clock {
             after_clock - current_clock
         } else {
             after_clock + u128::MAX - current_clock
@@ -151,34 +164,36 @@ impl Cpu {
         Ok(clocks_run)
     }
 
-    fn execute(&mut self, inst: Opcode, bus: &mut impl MemoryBus) {
+    async fn execute(&mut self, co: &mut Co<u128>, inst: Opcode, bus: &mut impl MemoryBus) {
         match inst {
-            Opcode::LoadAImmediate(val) => self.load_a_immediate(val),
-            Opcode::LoadAZeroPage(addr) => self.load_a_zero_page(bus, addr),
-            Opcode::LoadXImmediate(val) => self.load_x_immediate(val),
-            Opcode::LoadXZero(addr) => self.load_x_zero_page(bus, addr),
+            Opcode::LoadAImmediate(val) => self.load_a_immediate(co, val).await,
+            Opcode::LoadAZeroPage(addr) => self.load_a_zero_page(co, bus, addr).await,
+            Opcode::LoadXImmediate(val) => self.load_x_immediate(co, val).await,
+            Opcode::LoadXZero(addr) => self.load_x_zero_page(co, bus, addr).await,
+            Opcode::LoadXZeroY(addr) => self.load_x_zero_page_y(co, bus, addr).await,
+            Opcode::LoadXAbsoluteY(addr) => self.load_x_absolute_y(co, bus, addr).await,
             Opcode::LoadYImmediate(val) => self.load_y_immediate(val),
-            Opcode::LoadAZeroPageX(addr) => self.load_a_zero_page_x(bus, addr),
-            Opcode::LoadAAbsolute(addr) => self.load_a_absolute(bus, addr),
-            Opcode::LoadAAbsoluteX(addr) => self.load_a_absolute_x(bus, addr),
-            Opcode::LoadAAbsoluteY(addr) => self.load_a_absolute_y(bus, addr),
-            Opcode::LoadYZero(addr) => self.load_y_zero(bus, addr),
-            Opcode::LoadYZeroX(addr) => self.load_y_zero_x(bus, addr),
-            Opcode::LoadYAbsoluteX(addr) => self.load_y_absolute_x(bus, addr),
-            Opcode::LoadAIndY(addr) => self.load_a_indirect_y(bus, addr),
-            Opcode::StoreAZeroPage(addr) => self.store_a_zero_page(bus, addr),
-            Opcode::StoreAZeroPageX(addr) => self.store_a_zero_page_x(bus, addr),
-            Opcode::StoreAAbsolute(addr) => self.store_a_absolute(bus, addr),
-            Opcode::StoreAAbsoluteX(addr) => self.store_a_absolute_x(bus, addr),
-            Opcode::StoreAAbsoluteY(addr) => self.store_a_absolute_y(bus, addr),
-            Opcode::StoreAIndirectX(addr) => self.store_a_indirect_x(bus, addr),
-            Opcode::StoreAIndirectY(addr) => self.store_a_indirect_y(bus, addr),
-            Opcode::StoreXZeroPage(addr) => self.store_x_zero_page(bus, addr),
-            Opcode::StoreXZeroPageY(addr) => self.store_x_zero_page_y(bus, addr),
-            Opcode::StoreXAbsolute(addr) => self.store_x_absolute(bus, addr),
-            Opcode::StoreYZeroPage(addr) => self.store_y_zero_page(bus, addr),
-            Opcode::StoreYZeroPageX(addr) => self.store_y_zero_page_x(bus, addr),
-            Opcode::StoreYAbsolute(addr) => self.store_y_absolute(bus, addr),
+            Opcode::LoadAZeroPageX(addr) => self.load_a_zero_page_x(co, bus, addr).await,
+            Opcode::LoadAAbsolute(addr) => self.load_a_absolute(co, bus, addr).await,
+            Opcode::LoadAAbsoluteX(addr) => self.load_a_absolute_x(co, bus, addr).await,
+            Opcode::LoadAAbsoluteY(addr) => self.load_a_absolute_y(co, bus, addr).await,
+            Opcode::LoadYZero(addr) => self.load_y_zero(co, bus, addr).await,
+            Opcode::LoadYZeroX(addr) => self.load_y_zero_x(co, bus, addr).await,
+            Opcode::LoadYAbsoluteX(addr) => self.load_y_absolute_x(co, bus, addr).await,
+            Opcode::LoadAIndY(addr) => self.load_a_indirect_y(co, bus, addr).await,
+            Opcode::StoreAZeroPage(addr) => self.store_a_zero_page(co, bus, addr).await,
+            Opcode::StoreAZeroPageX(addr) => self.store_a_zero_page_x(co, bus, addr).await,
+            Opcode::StoreAAbsolute(addr) => self.store_a_absolute(co, bus, addr).await,
+            Opcode::StoreAAbsoluteX(addr) => self.store_a_absolute_x(co, bus, addr).await,
+            Opcode::StoreAAbsoluteY(addr) => self.store_a_absolute_y(co, bus, addr).await,
+            Opcode::StoreAIndirectX(addr) => self.store_a_indirect_x(co, bus, addr).await,
+            Opcode::StoreAIndirectY(addr) => self.store_a_indirect_y(co, bus, addr).await,
+            Opcode::StoreXZeroPage(addr) => self.store_x_zero_page(co, bus, addr).await,
+            Opcode::StoreXZeroPageY(addr) => self.store_x_zero_page_y(co, bus, addr).await,
+            Opcode::StoreXAbsolute(addr) => self.store_x_absolute(co, bus, addr).await,
+            Opcode::StoreYZeroPage(addr) => self.store_y_zero_page(co, bus, addr).await,
+            Opcode::StoreYZeroPageX(addr) => self.store_y_zero_page_x(co, bus, addr).await,
+            Opcode::StoreYAbsolute(addr) => self.store_y_absolute(co, bus, addr).await,
             Opcode::MoveAY => self.move_a_y(),
             Opcode::MoveAX => self.move_a_x(),
             Opcode::MoveSX => self.move_s_x(),
@@ -186,34 +201,34 @@ impl Cpu {
             Opcode::MoveXS => self.move_x_s(),
             Opcode::MoveYA => self.move_y_a(),
             Opcode::AddImmediate(value) => self.add_immediate(value),
-            Opcode::AddCarryZero(addr) => self.add_carry_zero(bus, addr),
+            Opcode::AddCarryZero(addr) => self.add_carry_zero(co, bus, addr).await,
             Opcode::SubCarryImmediate(value) => self.sub_carry_imm(value),
             Opcode::AndImm(value) => self.and_immediate(value),
-            Opcode::AndZero(addr) => self.and_zero(bus, addr),
-            Opcode::AndZeroX(addr) => self.and_zero_x(bus, addr),
-            Opcode::AndAbs(addr) => self.and_absolute(bus, addr),
-            Opcode::AndAbsX(addr) => self.and_absolute_x(bus, addr),
-            Opcode::AndAbsY(addr) => self.and_absolute_y(bus, addr),
-            Opcode::OrZero(addr) => self.or_zero(bus, addr),
+            Opcode::AndZero(addr) => self.and_zero(co, bus, addr).await,
+            Opcode::AndZeroX(addr) => self.and_zero_x(co, bus, addr).await,
+            Opcode::AndAbs(addr) => self.and_absolute(co, bus, addr).await,
+            Opcode::AndAbsX(addr) => self.and_absolute_x(co, bus, addr).await,
+            Opcode::AndAbsY(addr) => self.and_absolute_y(co, bus, addr).await,
+            Opcode::OrZero(addr) => self.or_zero(co, bus, addr).await,
             Opcode::XorImm(value) => self.xor_immediate(value),
-            Opcode::XorZero(addr) => self.xor_zero(bus, addr),
+            Opcode::XorZero(addr) => self.xor_zero(co, bus, addr).await,
             Opcode::JumpAbs(addr) => self.jump_abs(addr),
             Opcode::JumpInd(addr) => self.jump_ind(bus, addr),
             Opcode::JumpSubroutine(addr) => self.jump_subroutine(bus, addr),
-            Opcode::LShiftZero(addr) => self.shift_left_zero(bus, addr),
+            Opcode::LShiftZero(addr) => self.shift_left_zero(co, bus, addr).await,
             Opcode::LogRShiftAcc => self.logical_right_shift_acc(),
             Opcode::LogRShiftAbs(addr) => self.logical_right_shift_absolute(bus, addr),
             Opcode::RotateLAcc => self.rotate_left_accumulator(),
             Opcode::RotateRAcc => self.rotate_right_accumulator(),
             Opcode::RetSubroutine => self.return_subroutine(bus),
-            Opcode::AndIndX(addr) => self.and_indirect_x(bus, addr),
-            Opcode::AndIndY(addr) => self.and_indirect_y(bus, addr),
+            Opcode::AndIndX(addr) => self.and_indirect_x(co, bus, addr).await,
+            Opcode::AndIndY(addr) => self.and_indirect_y(co, bus, addr).await,
             Opcode::IncX => self.inc_x(),
             Opcode::DecX => self.dec_x(),
             Opcode::IncY => self.inc_y(),
             Opcode::DecY => self.dec_y(),
-            Opcode::IncMemZero(addr) => self.inc_memory_zero(bus, addr),
-            Opcode::DecMemZero(addr) => self.dec_memory_zero(bus, addr),
+            Opcode::IncMemZero(addr) => self.inc_memory_zero(co, bus, addr).await,
+            Opcode::DecMemZero(addr) => self.dec_memory_zero(co, bus, addr).await,
             Opcode::NoOp => self.noop(),
             Opcode::PushAcc => {
                 self.push_stack_byte(bus, self.ra);
@@ -233,11 +248,13 @@ impl Cpu {
             Opcode::BitTestZero(addr) => self.bit_test_zero_page(bus, addr),
             Opcode::BitTestAbs(addr) => self.bit_test_abs(bus, addr),
             Opcode::LShiftAcc => self.shift_left_acc(),
-            Opcode::CompareZero(addr) => self.compare_zero_page(bus, addr),
-            Opcode::CompareXImm(value) => self.compare_x_immediate(value),
-            Opcode::CompareXZero(addr) => self.compare_x_zero(bus, addr),
-            Opcode::CompareYImm(value) => self.compare_y_imm(value),
             Opcode::CompareImm(value) => self.compare_immediate(value),
+            Opcode::CompareZero(addr) => self.compare_zero_page(co, bus, addr).await,
+            Opcode::CompareZeroX(addr) => self.compare_zero_page_x(co, bus, addr).await,
+            Opcode::CompareXImm(value) => self.compare_x_immediate(value),
+            Opcode::CompareXZero(addr) => self.compare_x_zero(co, bus, addr).await,
+            Opcode::CompareYImm(value) => self.compare_y_imm(value),
+            Opcode::CompareYZero(addr) => self.compare_y_zero(co, bus, addr).await,
             Opcode::InterruptDisable => {
                 self.interrupt_disable = true;
                 self.increment_clock(2);
@@ -294,8 +311,6 @@ impl Cpu {
             self.increment_clock(2);
             return;
         }
-
-        //println!("JUMPING!");
 
         let current_pc = self.pc;
         let new_value = (current_pc as SignedWord).wrapping_add((addr as SignedByte) as SignedWord);
@@ -373,15 +388,15 @@ impl Cpu {
         self.increment_clock(2);
     }
 
-    fn add_carry_zero(&mut self, bus: &impl MemoryBus, addr: Byte) {
+    async fn add_carry_zero(&mut self, co: &mut Co<u128>, bus: &impl MemoryBus, addr: Byte) {
         if self.decimal_mode {
             println!("Don't know about decimal mode");
         }
 
+        co.yield_(3).await;
         let operand = bus.read_from_zero_page(addr as Word);
 
         add_register!(self, ra, operand);
-        self.increment_clock(3);
     }
 
     fn sub_carry_imm(&mut self, value: Byte) {
@@ -399,25 +414,25 @@ impl Cpu {
         self.increment_clock(2);
     }
 
-    fn and_zero(&mut self, bus: &impl MemoryBus, addr: Byte) {
+    async fn and_zero(&mut self, co: &mut Co<u128>, bus: &impl MemoryBus, addr: Byte) {
+        co.yield_(3).await;
         let value = bus.read_byte(addr as Word);
         let value = value & self.ra;
         load_register!(self, value, ra);
-        self.increment_clock(3);
     }
 
-    fn and_zero_x(&mut self, bus: &impl MemoryBus, addr: Byte) {
+    async fn and_zero_x(&mut self, co: &mut Co<u128>, bus: &impl MemoryBus, addr: Byte) {
+        co.yield_(4).await;
         let value = bus.read_from_zero_page(addr.wrapping_add(self.rx) as Word);
         let value = value & self.ra;
         load_register!(self, value, ra);
-        self.increment_clock(4);
     }
 
-    fn and_absolute(&mut self, bus: &impl MemoryBus, addr: Word) {
+    async fn and_absolute(&mut self, co: &mut Co<u128>, bus: &impl MemoryBus, addr: Word) {
+        co.yield_(4).await;
         let value = bus.read_byte(addr);
         let value = value & self.ra;
         load_register!(self, value, ra);
-        self.increment_clock(4);
     }
 
     fn logical_right_shift_acc(&mut self) {
@@ -497,117 +512,138 @@ impl Cpu {
     }
 
     #[inline]
-    fn and_absolute_plus(&mut self, bus: &impl MemoryBus, addr: Word, adder: Byte) {
+    async fn and_absolute_plus(&mut self, co: &mut Co<u128>, bus: &impl MemoryBus, addr: Word, adder: Byte) {
         let new_addr = addr.wrapping_add(adder as Word);
+        let clock = if page_crossed(addr, new_addr) { 5 } else { 4 };
+        co.yield_(clock).await;
         let value = bus.read_byte(new_addr);
         let value = value & self.ra;
 
         load_register!(self, value, ra);
-        let clock = if page_crossed(addr, new_addr) { 5 } else { 4 };
-        self.increment_clock(clock);
     }
 
-    fn and_absolute_x(&mut self, bus: &impl MemoryBus, addr: Word) {
-        self.and_absolute_plus(bus, addr, self.rx)
+    async fn and_absolute_x(&mut self, co: &mut Co<u128>, bus: &impl MemoryBus, addr: Word) {
+        self.and_absolute_plus(co, bus, addr, self.rx).await;
     }
 
-    fn and_absolute_y(&mut self, bus: &impl MemoryBus, addr: Word) {
-        self.and_absolute_plus(bus, addr, self.ry)
+    async fn and_absolute_y(&mut self, co: &mut Co<u128>, bus: &impl MemoryBus, addr: Word) {
+        self.and_absolute_plus(co ,bus, addr, self.ry).await
     }
 
-    fn and_indirect_x(&mut self, bus: &impl MemoryBus, addr: Byte) {
+    async fn and_indirect_x(&mut self, co: &mut Co<u128>, bus: &impl MemoryBus, addr: Byte) {
         let init_addr = addr.wrapping_add(self.rx);
+        co.yield_(3).await;
         let addr = bus.read_word_zero_page(init_addr as Word);
+        co.yield_(3).await;
         let value = bus.read_byte(addr);
         let value = value & self.ra;
 
         load_register!(self, value, ra);
-        self.increment_clock(6);
     }
 
-    fn and_indirect_y(&mut self, bus: &impl MemoryBus, addr: Byte) {
+    async fn and_indirect_y(&mut self, co: &mut Co<u128>, bus: &impl MemoryBus, addr: Byte) {
         let init_addr = bus.read_word_zero_page(addr as Word);
         let addr = init_addr.wrapping_add(self.ry.into());
-        let value = bus.read_byte(addr);
-        let value = value & self.ra;
-
-        load_register!(self, value, ra);
         let cycles_used = if page_crossed(init_addr as Word, addr as Word) {
             6
         } else {
             5
         };
-        self.increment_clock(cycles_used)
+        co.yield_(cycles_used).await;
+        let value = bus.read_byte(addr);
+        let value = value & self.ra;
+
+        load_register!(self, value, ra);
     }
 
-    fn or_zero(&mut self, bus: &impl MemoryBus, addr: Byte) {
+    async fn or_zero(&mut self, co: &mut Co<u128>, bus: &impl MemoryBus, addr: Byte) {
+        co.yield_(3).await;
         let operand = bus.read_from_zero_page(addr as Word);
         let value = self.ra | operand;
         load_register!(self, value, ra);
-        self.increment_clock(3);
     }
 
-    fn load_a_immediate(&mut self, value: Byte) {
+    async fn load_a_immediate(&mut self, co: &mut Co<u128>, value: Byte) {
+        co.yield_(2).await;
         load_register!(self, value, ra);
-        self.increment_clock(2);
     }
 
-    fn load_a_zero_page(&mut self, bus: &impl MemoryBus, addr: Byte) {
+    async fn load_a_zero_page(&mut self, co: &mut Co<u128>, bus: &impl MemoryBus, addr: Byte) {
+        co.yield_(3).await;
         load_register_zero_page!(self, ra, bus, addr);
-        self.increment_clock(3);
     }
 
-    fn load_a_zero_page_x(&mut self, bus: &impl MemoryBus, addr: Byte) {
+    async fn load_a_zero_page_x(&mut self, co: &mut Co<u128>, bus: &impl MemoryBus, addr: Byte) {
+        co.yield_(4).await;
         load_register_zero_page_plus!(self, ra, bus, rx, addr);
-        self.increment_clock(4);
     }
 
-    fn load_a_absolute(&mut self, bus: &impl MemoryBus, addr: Word) {
+    async fn load_a_absolute(&mut self, co: &mut Co<u128>, bus: &impl MemoryBus, addr: Word) {
+        co.yield_(4).await;
         let byte = bus.read_byte(addr);
         load_register!(self, byte, ra);
-        self.increment_clock(4);
     }
 
-    fn load_a_absolute_x(&mut self, bus: &impl MemoryBus, addr: Word) {
+    async fn load_a_absolute_x(&mut self, co: &mut Co<u128>, bus: &impl MemoryBus, addr: Word) {
         let new_addr = addr.wrapping_add(self.rx as Word);
-        let byte = bus.read_byte(new_addr);
-        load_register!(self, byte, ra);
         let cycles_used = if page_crossed(addr, new_addr) { 5 } else { 4 };
 
-        self.increment_clock(cycles_used);
+        co.yield_(cycles_used).await;
+        let byte = bus.read_byte(new_addr);
+
+        load_register!(self, byte, ra);
     }
 
-    fn load_a_absolute_y(&mut self, bus: &impl MemoryBus, addr: Word) {
+    async fn load_a_absolute_y(&mut self, co: &mut Co<u128>, bus: &impl MemoryBus, addr: Word) {
         let new_addr = addr.wrapping_add(self.ry as Word);
+        let cycles_used = if page_crossed(addr, new_addr) { 5 } else { 4 };
+        co.yield_(cycles_used).await;
+
         let byte = bus.read_byte(new_addr);
         load_register!(self, byte, ra);
-        let cycles_used = if page_crossed(addr, new_addr) { 5 } else { 4 };
-
-        self.increment_clock(cycles_used);
     }
 
-    fn load_a_indirect_y(&mut self, bus: &impl MemoryBus, addr: Byte) {
+    async fn load_a_indirect_y(&mut self, co: &mut Co<u128>, bus: &impl MemoryBus, addr: Byte) {
+        // This would technically take a couple of cycles. Less likely clock cycles would affect
         let new_addr = bus.read_word_zero_page(addr as Word);
-        let byte = bus.read_byte(new_addr.wrapping_add(self.ry as Word));
-        load_register!(self, byte, ra);
+
         let cycles_used = if page_crossed(addr as Word, new_addr as Word) {
             6
         } else {
             5
         };
-
-        self.increment_clock(cycles_used);
+        co.yield_(cycles_used).await;
+        let byte = bus.read_byte(new_addr.wrapping_add(self.ry as Word));
+        load_register!(self, byte, ra);
     }
 
-    fn load_x_immediate(&mut self, value: Byte) {
+    async fn load_x_immediate(&mut self, co: &mut Co<u128>, value: Byte) {
+        co.yield_(2).await;
         load_register!(self, value, rx);
-        self.increment_clock(2);
     }
 
-    fn load_x_zero_page(&mut self, bus: &impl MemoryBus, addr: Byte) {
+    async fn load_x_zero_page(&mut self, co: &mut Co<u128>, bus: &impl MemoryBus, addr: Byte) {
+        co.yield_(3).await;
         let value = bus.read_from_zero_page(addr as Word);
         load_register!(self, value, rx);
-        self.increment_clock(3);
+    }
+
+    async fn load_x_zero_page_y(&mut self, co: &mut Co<u128>, bus: &impl MemoryBus, addr: Byte) {
+        co.yield_(4).await;
+        let value = bus.read_from_zero_page(addr.wrapping_add(self.ry) as Word);
+        load_register!(self, value, rx);
+    }
+
+    async fn load_x_absolute_y(&mut self, co: &mut Co<u128>, bus: &impl MemoryBus, addr: Word) {
+        let new_addr = bus.read_word_zero_page(addr as Word);
+        let cycles_used = if page_crossed(addr as Word, new_addr as Word) {
+            6
+        } else {
+            5
+        };
+        co.yield_(cycles_used).await;
+        let byte = bus.read_byte(new_addr.wrapping_add(self.ry as Word));
+        load_register!(self, byte, rx);
     }
 
     fn load_y_immediate(&mut self, value: Byte) {
@@ -615,96 +651,98 @@ impl Cpu {
         self.increment_clock(2);
     }
 
-    fn load_y_zero(&mut self, bus: &impl MemoryBus, addr: Byte) {
+    async fn load_y_zero(&mut self, co: &mut Co<u128>, bus: &impl MemoryBus, addr: Byte) {
+        co.yield_(3).await;
         let value = bus.read_from_zero_page(addr as Word);
         load_register!(self, value, ry);
         self.increment_clock(3);
     }
 
-    fn load_y_zero_x(&mut self, bus: &impl MemoryBus, addr: Byte) {
+    async fn load_y_zero_x(&mut self, co: &mut Co<u128>, bus: &impl MemoryBus, addr: Byte) {
+        co.yield_(4).await;
         let value = bus.read_from_zero_page(addr.wrapping_add(self.rx) as Word);
         load_register!(self, value, ry);
-        self.increment_clock(4);
     }
 
-    fn load_y_absolute_x(&mut self, bus: &impl MemoryBus, addr: Word) {
+    async fn load_y_absolute_x(&mut self, co: &mut Co<u128>, bus: &impl MemoryBus, addr: Word) {
         let new_addr = addr.wrapping_add(self.rx as Word);
+        let clocks = if page_crossed(addr, new_addr) { 5 } else { 4 };
+        co.yield_(clocks).await;
         let value = bus.read_byte(new_addr);
         load_register!(self, value, ry);
-        let clocks = if page_crossed(addr, new_addr) { 5 } else { 4 };
-
-        self.increment_clock(clocks)
     }
 
-    fn store_a_zero_page(&mut self, bus: &mut impl MemoryBus, addr: Byte) {
+    async fn store_a_zero_page(&mut self, co: &mut Co<u128>, bus: &mut impl MemoryBus, addr: Byte) {
+        co.yield_(3).await;
         bus.write_byte(addr as Word, self.ra);
-        self.increment_clock(3);
     }
 
-    fn store_a_zero_page_x(&mut self, bus: &mut impl MemoryBus, addr: Byte) {
+    async fn store_a_zero_page_x(&mut self, co: &mut Co<u128>, bus: &mut impl MemoryBus, addr: Byte) {
+        co.yield_(4).await;
         bus.write_to_zero_page(addr.wrapping_add(self.rx) as Word, self.ra);
-        self.increment_clock(4);
     }
 
-    fn store_a_absolute(&mut self, bus: &mut impl MemoryBus, addr: Word) {
+    async fn store_a_absolute(&mut self, co: &mut Co<u128>, bus: &mut impl MemoryBus, addr: Word) {
+        co.yield_(4).await;
         bus.write_byte(addr, self.ra);
-        self.increment_clock(4);
     }
 
-    fn store_a_absolute_x(&mut self, bus: &mut impl MemoryBus, addr: Word) {
+    async fn store_a_absolute_x(&mut self, co: &mut Co<u128>, bus: &mut impl MemoryBus, addr: Word) {
+        co.yield_(5).await;
         bus.write_byte(addr.wrapping_add(self.rx as Word), self.ra);
-        self.increment_clock(5);
     }
 
-    fn store_a_absolute_y(&mut self, bus: &mut impl MemoryBus, addr: Word) {
+    async fn store_a_absolute_y(&mut self, co: &mut Co<u128>, bus: &mut impl MemoryBus, addr: Word) {
+        co.yield_(5).await;
         bus.write_byte(addr.wrapping_add(self.ry as Word), self.ra);
-        self.increment_clock(5);
     }
 
-    fn store_a_indirect_x(&mut self, bus: &mut impl MemoryBus, addr: Byte) {
+    async fn store_a_indirect_x(&mut self, co: &mut Co<u128>, bus: &mut impl MemoryBus, addr: Byte) {
         let addr = bus.read_word_zero_page(addr.wrapping_add(self.rx) as Word);
+        co.yield_(6).await;
         bus.write_byte(addr as Word, self.ra);
-        self.increment_clock(6);
     }
 
-    fn store_a_indirect_y(&mut self, bus: &mut impl MemoryBus, addr: Byte) {
+    async fn store_a_indirect_y(&mut self, co: &mut Co<u128>, bus: &mut impl MemoryBus, addr: Byte) {
         let addr = bus
             .read_word_zero_page(addr as Word)
             .wrapping_add(self.ry as Word);
+
+        co.yield_(6).await;
         bus.write_byte(addr, self.ra);
-        self.increment_clock(6);
     }
 
-    fn store_x_zero_page(&mut self, bus: &mut impl MemoryBus, addr: Byte) {
+    async fn store_x_zero_page(&mut self, co: &mut Co<u128>, bus: &mut impl MemoryBus, addr: Byte) {
+        co.yield_(3).await;
         bus.write_byte(addr as Word, self.rx);
-        self.increment_clock(3);
     }
 
-    fn store_x_zero_page_y(&mut self, bus: &mut impl MemoryBus, addr: Byte) {
+    async fn store_x_zero_page_y(&mut self, co: &mut Co<u128>, bus: &mut impl MemoryBus, addr: Byte) {
         let addr = addr.wrapping_add(self.ry);
+        co.yield_(4).await;
         bus.write_byte(addr as Word, self.rx);
-        self.increment_clock(4);
     }
 
-    fn store_x_absolute(&mut self, bus: &mut impl MemoryBus, addr: Word) {
+    async fn store_x_absolute(&mut self, co: &mut Co<u128>, bus: &mut impl MemoryBus, addr: Word) {
+        co.yield_(4).await;
         bus.write_byte(addr, self.rx);
-        self.increment_clock(4);
     }
 
-    fn store_y_zero_page(&mut self, bus: &mut impl MemoryBus, addr: Byte) {
+    async fn store_y_zero_page(&mut self, co: &mut Co<u128>, bus: &mut impl MemoryBus, addr: Byte) {
+        co.yield_(3).await;
         bus.write_byte(addr as Word, self.ry);
-        self.increment_clock(3);
     }
 
-    fn store_y_zero_page_x(&mut self, bus: &mut impl MemoryBus, addr: Byte) {
+    async fn store_y_zero_page_x(&mut self, co: &mut Co<u128>, bus: &mut impl MemoryBus, addr: Byte) {
         let addr = addr.wrapping_add(self.rx);
+        co.yield_(4).await;
         bus.write_byte(addr as Word, self.ry);
         self.increment_clock(4);
     }
 
-    fn store_y_absolute(&mut self, bus: &mut impl MemoryBus, addr: Word) {
+    async fn store_y_absolute(&mut self, co: &mut Co<u128>, bus: &mut impl MemoryBus, addr: Word) {
+        co.yield_(4).await;
         bus.write_byte(addr, self.ry);
-        self.increment_clock(4);
     }
 
     fn move_a_y(&mut self) {
@@ -767,22 +805,24 @@ impl Cpu {
         self.increment_clock(2);
     }
 
-    fn inc_memory_zero(&mut self, bus: &mut impl MemoryBus, addr: Byte) {
+   async fn inc_memory_zero(&mut self, co: &mut Co<u128>, bus: &mut impl MemoryBus, addr: Byte) {
+        co.yield_(2).await;
         let value = bus.read_from_zero_page(addr as Word).wrapping_add(1);
+        co.yield_(3).await;
         bus.write_byte(addr as Word, value);
 
         self.zero = value == 0;
         self.negative = is_bit_set(value as Word, 7);
-        self.increment_clock(5);
     }
 
-    fn dec_memory_zero(&mut self, bus: &mut impl MemoryBus, addr: Byte) {
+    async fn dec_memory_zero(&mut self, co: &mut Co<u128>, bus: &mut impl MemoryBus, addr: Byte) {
+        co.yield_(2).await;
         let value = bus.read_from_zero_page(addr as Word).wrapping_sub(1);
+        co.yield_(3).await;
         bus.write_byte(addr as Word, value);
 
         self.zero = value == 0;
         self.negative = is_bit_set(value as Word, 7);
-        self.increment_clock(5);
     }
 
     fn shift_left_acc(&mut self) {
@@ -793,13 +833,13 @@ impl Cpu {
         self.increment_clock(2);
     }
 
-    fn shift_left_zero(&mut self, bus: &mut impl MemoryBus, addr: Byte) {
+    async fn shift_left_zero(&mut self, co: &mut Co<u128>, bus: &mut impl MemoryBus, addr: Byte) {
         let original = bus.read_from_zero_page(addr as Word);
         let value = original.wrapping_shl(1);
 
+        co.yield_(5).await;
         bus.write_to_zero_page(addr as Word, value);
         self.carry = is_bit_set(original as Word, 7);
-        self.increment_clock(5);
     }
 
     fn compare_immediate(&mut self, value: Byte) {
@@ -810,13 +850,22 @@ impl Cpu {
         self.increment_clock(2);
     }
 
-    fn compare_zero_page(&mut self, bus: &impl MemoryBus, addr: Byte) {
+    async fn compare_zero_page(&mut self, co: &mut Co<u128>, bus: &impl MemoryBus, addr: Byte) {
+        co.yield_(3).await;
         let value = bus.read_from_zero_page(addr as Word);
         self.zero = value == self.ra;
         self.carry = self.ra >= value;
 
         self.negative = is_bit_set(self.ra.wrapping_sub(value) as Word, 7);
-        self.increment_clock(2);
+    }
+
+    async fn compare_zero_page_x(&mut self, co: &mut Co<u128>, bus: &impl MemoryBus, addr: Byte) {
+        co.yield_(4).await;
+        let value = bus.read_from_zero_page(addr.wrapping_add(self.rx) as Word);
+        self.zero = value == self.ra;
+        self.carry = self.ra >= value;
+
+        self.negative = is_bit_set(self.ra.wrapping_sub(value) as Word, 7);
     }
 
     fn compare_x_immediate(&mut self, value: Byte) {
@@ -827,14 +876,14 @@ impl Cpu {
         self.increment_clock(2);
     }
 
-    fn compare_x_zero(&mut self, bus: &impl MemoryBus, addr: Byte) {
+    async fn compare_x_zero(&mut self, co: &mut Co<u128>, bus: &impl MemoryBus, addr: Byte) {
+        co.yield_(2).await;
         let value = bus.read_from_zero_page(addr as Word);
 
         self.zero = self.rx == value;
         self.carry = self.rx >= value;
 
         self.negative = is_bit_set(self.rx.wrapping_sub(value) as Word, 7);
-        self.increment_clock(2);
     }
 
     fn compare_y_imm(&mut self, value: Byte) {
@@ -844,17 +893,26 @@ impl Cpu {
         self.increment_clock(2);
     }
 
+    async fn compare_y_zero(&mut self, co: &mut Co<u128>, bus: &impl MemoryBus, addr: Byte) {
+        co.yield_(2).await;
+        let value = bus.read_from_zero_page(addr as Word);
+
+        self.carry = self.ry >= value;
+        self.zero = self.ry == value;
+        self.negative = is_bit_set(self.ry.wrapping_sub(value) as Word, 7);
+    }
+
     fn xor_immediate(&mut self, operand: Byte) {
         let value = self.ra ^ operand;
         load_register!(self, value, ra);
         self.increment_clock(2);
     }
 
-    fn xor_zero(&mut self, bus: &impl MemoryBus, addr: Byte) {
+    async fn xor_zero(&mut self, co: &mut Co<u128>, bus: &impl MemoryBus, addr: Byte) {
+        co.yield_(3).await;
         let operand = bus.read_from_zero_page(addr as Word);
         let value = self.ra ^ operand;
         load_register!(self, value, ra);
-        self.increment_clock(3);
     }
 
     fn noop(&mut self) {

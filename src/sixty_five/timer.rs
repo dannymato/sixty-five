@@ -6,7 +6,6 @@ mod tests;
 pub struct Timer {
     current_time: u32,
     current_interval: u32,
-    overflowed: bool,
 }
 
 const TIMER_START: u32 = 0xffu32;
@@ -16,19 +15,14 @@ impl Timer {
         Timer {
             current_time: 0xff,
             current_interval: 1,
-            overflowed: true,
         }
-    }
-
-    fn reset(&mut self, interval: u32) {
-        self.current_time = TIMER_START * interval;
-        self.current_interval = interval;
     }
 
     pub fn read_byte(&self, addr: Word) -> Byte {
         if addr & 0x284 == 0x284 {
             return (self.current_time / self.current_interval) as Byte;
         }
+
         0x0
     }
 
@@ -52,7 +46,7 @@ impl Timer {
             self.current_time = TIMER_START;
 
             // Need to add the rest of the clocks necessary
-            self.current_time -= clocks - current;
+            self.current_time -= (clocks - current) % TIMER_START;
             return;
         }
 

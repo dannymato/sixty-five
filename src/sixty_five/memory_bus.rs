@@ -1,3 +1,5 @@
+use std::cell::RefCell;
+
 use crate::sixty_five::{tia::Tia, timer::Timer};
 
 use super::{
@@ -18,10 +20,10 @@ pub trait BusWrite {
 
 pub enum BusMember<'a> {
     Null(NullBus),
-    MainMemory(&'a mut Memory),
-    Cartridge(&'a mut Cartridge),
-    TIA(&'a mut Tia),
-    Timer(&'a mut Timer),
+    MainMemory(&'a RefCell<Memory>),
+    Cartridge(&'a RefCell<Cartridge>),
+    TIA(&'a RefCell<Tia>),
+    Timer(&'a RefCell<Timer>),
     Constant(Byte),
 }
 
@@ -29,10 +31,10 @@ impl<'a> BusWrite for &mut BusMember<'a> {
     fn write_byte(&mut self, addr: Word, data: Byte) {
         match self {
             BusMember::Null(null) => null.write_byte(addr, data),
-            BusMember::MainMemory(mem) => mem.write_byte(addr, data),
-            BusMember::Cartridge(cart) => cart.write_byte(addr, data),
-            BusMember::TIA(tia) => tia.write_byte(addr, data),
-            BusMember::Timer(timer) => timer.write_byte(addr, data),
+            BusMember::MainMemory(mem) => mem.borrow_mut().write_byte(addr, data),
+            BusMember::Cartridge(cart) => cart.borrow_mut().write_byte(addr, data),
+            BusMember::TIA(tia) => tia.borrow_mut().write_byte(addr, data),
+            BusMember::Timer(timer) => timer.borrow_mut().write_byte(addr, data),
             BusMember::Constant(_) => {}
         }
     }
@@ -42,10 +44,10 @@ impl<'a> BusRead for &BusMember<'a> {
     fn read_byte(&self, addr: Word) -> Byte {
         match self {
             BusMember::Null(null) => null.read_byte(addr),
-            BusMember::MainMemory(mem) => mem.read_byte(addr),
-            BusMember::Cartridge(cart) => cart.read_byte(addr),
-            BusMember::TIA(tia) => tia.read_byte(addr),
-            BusMember::Timer(timer) => timer.read_byte(addr),
+            BusMember::MainMemory(mem) => mem.borrow().read_byte(addr),
+            BusMember::Cartridge(cart) => cart.borrow().read_byte(addr),
+            BusMember::TIA(tia) => tia.borrow().read_byte(addr),
+            BusMember::Timer(timer) => timer.borrow().read_byte(addr),
             BusMember::Constant(byte) => *byte,
         }
     }

@@ -6,7 +6,9 @@ use anyhow::anyhow;
 use macroquad::{miniquad::conf::Platform, window};
 use sixty_five::{cartridge::Cartridge, memory::Memory};
 
-use crate::sixty_five::{cpu::Cpu, tia::Tia, timer::Timer, twentysix::TwentySix};
+use crate::sixty_five::{
+    cpu::Cpu, event_bus::EventBus, tia::Tia, timer::Timer, twentysix::TwentySix,
+};
 
 mod sixty_five;
 
@@ -33,7 +35,8 @@ async fn main() -> anyhow::Result<()> {
         .ok_or_else(|| anyhow!("Cart path invalid"))?;
 
     let cartridge = Cartridge::new(cart_path)?;
-    let tia = Tia::new();
+    let event_bus = EventBus::new();
+    let tia = Tia::new(event_bus.new_writer());
 
     let memory = Memory::new();
 
@@ -41,7 +44,7 @@ async fn main() -> anyhow::Result<()> {
 
     let cpu = Cpu::new();
 
-    let mut atari = TwentySix::new(cpu, memory, tia, cartridge, timer)?;
+    let mut atari = TwentySix::new(cpu, memory, tia, cartridge, timer, event_bus)?;
 
     loop {
         atari.run_instruction().await.inspect_err(|err| {

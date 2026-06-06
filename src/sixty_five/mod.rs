@@ -2,6 +2,7 @@ mod bit_utils;
 pub mod cartridge;
 pub mod cpu;
 mod data_types;
+pub mod event_bus;
 mod io_bus;
 pub mod memory;
 pub mod memory_bus;
